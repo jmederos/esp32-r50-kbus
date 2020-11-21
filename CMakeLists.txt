@@ -1,4 +1,4 @@
 cmake_minimum_required(VERSION 3.5)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(esp32_r50_kbus)
+project(esp32-r50-kbus)

@@ -38,13 +38,13 @@
  *  called from BTstack timers or in response to its callbacks, e.g. packet handlers.
  */
 
+#include <stddef.h>
+
 #include "btstack_port_esp32.h"
 #include "btstack_run_loop.h"
 #include "hci_dump.h"
 
-#include <stddef.h>
-
-extern int btstack_main(int argc, const char * argv[]);
+#include "btstack_main.h"
 
 int app_main(void){
 
