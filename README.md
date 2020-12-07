@@ -64,7 +64,7 @@ Install `esp-idf` and the ESP32 `btstack` port by following the respective instr
 
 #### Reference
 * [How to find pre-wiring](https://www.northamericanmotoring.com/forums/navigation-and-audio/224408-can-t-find-cd-changer-pre-wiring.html)
-* [CD changer installation instructions]https://new.minimania.com/images/instructions/OEM%20CD%20Changer.pdf)
+* [CD changer installation instructions](https://new.minimania.com/images/instructions/OEM%20CD%20Changer.pdf)
 
 
 ## Roadmap
