@@ -29,35 +29,58 @@
  *
  */
 
-/*
- *  main.c
- *
- *  Minimal main application that initializes BTstack, prepares the example and enters BTstack's Run Loop.
- *
- *  If needed, you can create other threads. Please note that BTstack's API is not thread-safe and can only be
- *  called from BTstack timers or in response to its callbacks, e.g. packet handlers.
- */
-
 #include <stddef.h>
+
+#include "esp_system.h"
+#include "esp_log.h"
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/projdefs.h"
+#include "freertos/task.h"
 
 #include "btstack_port_esp32.h"
 #include "btstack_run_loop.h"
 #include "hci_dump.h"
 
-#include "btstack_main.h"
+#include "bt_services.h"
+
+static const char* TAG = "r50-main";
+
+static void sample_worker(void *pvParameter){
+    (void)(sizeof(pvParameter));
+    static int counter = 0;
+    while(1){
+        printf("BTstack runs in other task - counter %u\n", counter++);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+}
+
+void create_server_task(void){
+    static const char* TAG = "r50-srvTsk";
+    ESP_LOGI(TAG, "Creating task");
+
+    int btTaskReturn = -1;
+
+    btTaskReturn = xTaskCreate(&sample_worker, "r50-bts-loop", 4096, NULL, 5, NULL);
+
+    if(btTaskReturn != pdPASS) {
+        ESP_LOGE(TAG, "Task creation failed with: %d", btTaskReturn);
+    }
+}
+
 
 int app_main(void){
+    // ESP_LOGI(TAG, "init NVS");
+    // nvs_flash_init();
 
-    // optional: enable packet logger
-    // hci_dump_open(NULL, HCI_DUMP_STDOUT);
+    create_server_task();
 
-    // Configure BTstack for ESP32 VHCI Controller
-    btstack_init();
+    ESP_LOGI(TAG, "Starting bt services...");
+    bluetooth_services_setup();
 
-    // Setup example
-    btstack_main(0, NULL);
-
-    // Enter run loop (forever)
+    // Running btstack_run_loop_execute() as it's own task or in a wrapper wasn't working;
+    // however, does work as lowest priority loop after other tasks. Going with this.
+    ESP_LOGI(TAG, "btstack run loop");
     btstack_run_loop_execute();
 
     return 0;

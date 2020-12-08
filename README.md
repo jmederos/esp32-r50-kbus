@@ -86,6 +86,6 @@ Distributed under the MPL 2.0 License. See `LICENSE` for more information.
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
 [license-shield]: https://img.shields.io/badge/license-MPL%202.0-blue
-[license-url]: https://github.com/jmederos/esp32-r50-kbus/blob/master/LICENSE.txt
+[license-url]: https://github.com/jmederos/esp32-r50-kbus/blob/master/LICENSE
 [linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=flat-square&logo=linkedin&colorB=555
 [linkedin-url]: https://linkedin.com/in/jacobmederos
