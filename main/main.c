@@ -29,20 +29,27 @@
  *
  */
 
+// C stdlib includes
 #include <stddef.h>
 
-#include "esp_system.h"
-#include "esp_log.h"
-
+// FreeRTOS includes
 #include "freertos/FreeRTOS.h"
 #include "freertos/projdefs.h"
 #include "freertos/task.h"
 
+// esp-idf includes
+#include "esp_system.h"
+#include "esp_log.h"
+#include "nvs_flash.h"
+
+// btstack includes
 #include "btstack_port_esp32.h"
 #include "btstack_run_loop.h"
 #include "hci_dump.h"
 
+// component includes
 #include "bt_services.h"
+#include "wifi_service.h"
 
 static const char* TAG = "r50-main";
 
@@ -51,7 +58,7 @@ static void sample_worker(void *pvParameter){
     static int counter = 0;
     while(1){
         printf("BTstack runs in other task - counter %u\n", counter++);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        vTaskDelay(10000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -68,12 +75,23 @@ void create_server_task(void){
     }
 }
 
+static void initNVS(){
+    //Initialize NVS
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+      ESP_ERROR_CHECK(nvs_flash_erase());
+      ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+}
+
 
 int app_main(void){
-    // ESP_LOGI(TAG, "init NVS");
-    // nvs_flash_init();
+    initNVS();
 
     create_server_task();
+
+    wifi_init_softap();
 
     ESP_LOGI(TAG, "Starting bt services...");
     bluetooth_services_setup();

@@ -1,3 +1,4 @@
+.vscode/
 build/
 
 # Created by https://www.toptal.com/developers/gitignore/api/windows,linux,macos,c,cmake

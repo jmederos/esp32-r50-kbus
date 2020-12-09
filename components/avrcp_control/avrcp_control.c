@@ -80,7 +80,7 @@ int avrcp_setup(void){
     // Set local name with a template Bluetooth address, that will be automatically
     // replaced with a actual address once it is available, i.e. when BTstack boots
     // up and starts talking to a Bluetooth module.
-    gap_set_local_name("R50 Control");
+    gap_set_local_name("R50 Control"); //TODO: Add this to menuconfig / store in NVS
     gap_discoverable_control(1);
     gap_set_class_of_device(0x240418);
 

@@ -1,4 +1,4 @@
-menu "Example Configuration"
+menu "K-Bus WiFi Config"
 
     config ESP_WIFI_SSID
         string "WiFi SSID"
