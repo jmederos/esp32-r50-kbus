@@ -50,6 +50,11 @@
 // component includes
 #include "bt_services.h"
 #include "wifi_service.h"
+#include "kbus_uart_driver.h"
+
+// TODO: Add these as menuconfig items
+// #define R50_BT_ENABLED
+#define R50_WIFI_ENABLED
 
 static const char* TAG = "r50-main";
 
@@ -57,8 +62,8 @@ static void sample_worker(void *pvParameter){
     (void)(sizeof(pvParameter));
     static int counter = 0;
     while(1){
-        printf("BTstack runs in other task - counter %u\n", counter++);
-        vTaskDelay(10000 / portTICK_PERIOD_MS);
+        printf("HTTP task goes here... - counter %u\n", counter++);
+        vTaskDelay(120000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -66,12 +71,10 @@ void create_server_task(void){
     static const char* TAG = "r50-srvTsk";
     ESP_LOGI(TAG, "Creating task");
 
-    int btTaskReturn = -1;
+    int srvTaskRet = xTaskCreatePinnedToCore(&sample_worker, "r50-bts-loop", 4096, NULL, 5, NULL, 1);
 
-    btTaskReturn = xTaskCreate(&sample_worker, "r50-bts-loop", 4096, NULL, 5, NULL);
-
-    if(btTaskReturn != pdPASS) {
-        ESP_LOGE(TAG, "Task creation failed with: %d", btTaskReturn);
+    if(srvTaskRet != pdPASS) {
+        ESP_LOGE(TAG, "Task creation failed with: %d", srvTaskRet);
     }
 }
 
@@ -89,17 +92,26 @@ static void initNVS(){
 int app_main(void){
     initNVS();
 
+    init_kbus_uart_driver();
+
+    #ifdef R50_WIFI_ENABLED
     create_server_task();
-
     wifi_init_softap();
+    #endif
 
+    #ifdef R50_BT_ENABLED
     ESP_LOGI(TAG, "Starting bt services...");
     bluetooth_services_setup();
-
     // Running btstack_run_loop_execute() as it's own task or in a wrapper wasn't working;
     // however, does work as lowest priority loop after other tasks. Going with this.
     ESP_LOGI(TAG, "btstack run loop");
     btstack_run_loop_execute();
+    #else
+    while(1) {
+        printf("Bluetooth runloop goes here...\n");
+        vTaskDelay(600000 / portTICK_PERIOD_MS);
+    }
+    #endif
 
     return 0;
 }
