@@ -9,12 +9,13 @@
 #define TXD_PIN (GPIO_NUM_17)
 #define RXD_PIN (GPIO_NUM_16)
 #define SERVICE_UART UART_NUM_2
+#define LED_PIN (GPIO_NUM_2)
 
 
 //TODO: Add to kconfig
-#define KBUS_TX_IS_ENABLED false
+#define KBUS_TX_IS_ENABLED flase
 
-static const int RX_BUF_SIZE = 512;
+static const int RX_BUF_SIZE = 1024;
 static const char* TAG = "kbus_driver";
 
 #if KBUS_TX_IS_ENABLED
@@ -36,10 +37,10 @@ void init_kbus_uart_driver() {
     };
     ESP_ERROR_CHECK(uart_param_config(SERVICE_UART, &uart_config));
 
-    // UART2 is on 16/17 by default; uart_set_pin() initializes pins
-    ESP_ERROR_CHECK(uart_set_pin(SERVICE_UART, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    // uart_set_pin() sets GPIO_PULLUP_ONLY on RX, not TX. Need it to avoid taking control of k-bus when inactive.
-    ESP_ERROR_CHECK(gpio_set_pull_mode(RXD_PIN, GPIO_PULLUP_ONLY));
+    // UART2 is supposed to be on 16/17 by default; didn't seem to be the case when testing...
+    ESP_ERROR_CHECK(uart_set_pin(SERVICE_UART, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    // uart_set_pin() sets GPIO_PULLUP_ONLY on RX, not TX. Need it to avoid taking control of k-bus when only listening.
+    ESP_ERROR_CHECK(gpio_set_pull_mode(TXD_PIN, GPIO_PULLUP_ONLY));
     // We won't use a buffer for sending data.
     ESP_ERROR_CHECK(uart_driver_install(SERVICE_UART, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
     // Make sure we're in standard uart mode
@@ -51,6 +52,10 @@ void init_kbus_uart_driver() {
     ESP_LOGI(TAG, "Creating tx task");
     xTaskCreatePinnedToCore(tx_task, "uart_tx_task", 1024*2, NULL, configMAX_PRIORITIES-1, NULL, 1);
 #endif
+
+    // Setup onboard LED
+    gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(LED_PIN, 0);
 }
 
 #if KBUS_TX_IS_ENABLED
@@ -88,11 +93,16 @@ static void rx_task()
     esp_log_level_set(RX_TASK_TAG, ESP_LOG_INFO);
     uint8_t* data = (uint8_t*) malloc(RX_BUF_SIZE+1);
     while (1) {
+        // gpio_set_level(LED_PIN, 1);
         const int rxBytes = uart_read_bytes(SERVICE_UART, data, RX_BUF_SIZE, 200 / portTICK_RATE_MS);
+        gpio_set_level(LED_PIN, 0);
+        // vTaskDelay(200 / portTICK_RATE_MS);
         if (rxBytes > 0) {
+            gpio_set_level(LED_PIN, 1);
             data[rxBytes] = 0;
             ESP_LOGI(RX_TASK_TAG, "Read %d bytes: '%s'", rxBytes, data);
             ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, data, rxBytes, ESP_LOG_INFO);
+            // gpio_set_level(LED_PIN, 0);
         }
     }
     free(data);
