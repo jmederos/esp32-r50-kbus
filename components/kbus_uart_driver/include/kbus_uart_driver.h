@@ -8,7 +8,7 @@
  * 
  * TODO: graceful error handling.
  */
-void init_kbus_uart_driver(void (*rx_callback)(uint8_t* data), uint8_t rx_poll_hz);
+void init_kbus_uart_driver(void (*rx_callback)(uint8_t* data, uint8_t rx_bytes), uint8_t rx_poll_hz);
 
 /**
  * @brief Writes string to kbus UART.
