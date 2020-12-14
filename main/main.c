@@ -50,7 +50,7 @@
 // component includes
 #include "bt_services.h"
 #include "wifi_service.h"
-#include "kbus_uart_driver.h"
+#include "kbus_service.h"
 
 // TODO: Add these as menuconfig items
 // #define R50_BT_ENABLED
@@ -92,26 +92,27 @@ static void initNVS(){
 int app_main(void){
     initNVS();
 
-    init_kbus_uart_driver();
+    init_kbus_service();
+    begin_cdc_emulator();
 
-    #ifdef R50_WIFI_ENABLED
+#ifdef R50_WIFI_ENABLED
     create_server_task();
     wifi_init_softap();
-    #endif
+#endif
 
-    #ifdef R50_BT_ENABLED
+#ifdef R50_BT_ENABLED
     ESP_LOGI(TAG, "Starting bt services...");
     bluetooth_services_setup();
     // Running btstack_run_loop_execute() as it's own task or in a wrapper wasn't working;
     // however, does work as lowest priority loop after other tasks. Going with this.
     ESP_LOGI(TAG, "btstack run loop");
     btstack_run_loop_execute();
-    #else
+#else
     while(1) {
         printf("Bluetooth runloop goes here...\n");
         vTaskDelay(600000 / portTICK_PERIOD_MS);
     }
-    #endif
+#endif
 
     return 0;
 }
