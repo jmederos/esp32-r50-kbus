@@ -29,12 +29,14 @@
  *
  */
 
+
 // C stdlib includes
 #include <stddef.h>
 
 // FreeRTOS includes
 #include "freertos/FreeRTOS.h"
 #include "freertos/projdefs.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 
 // esp-idf includes
@@ -51,12 +53,14 @@
 #include "bt_services.h"
 #include "wifi_service.h"
 #include "kbus_service.h"
+#include "bt_commands.h"
 
 // TODO: Add these as menuconfig items
 // #define R50_BT_ENABLED
-#define R50_WIFI_ENABLED
+//#define R50_WIFI_ENABLED
 
 static const char* TAG = "r50-main";
+static QueueHandle_t bt_cmd_queue;
 
 static void sample_worker(void *pvParameter){
     (void)(sizeof(pvParameter));
@@ -72,10 +76,7 @@ void create_server_task(void){
     ESP_LOGI(TAG, "Creating task");
 
     int srvTaskRet = xTaskCreatePinnedToCore(&sample_worker, "r50-bts-loop", 4096, NULL, 5, NULL, 1);
-
-    if(srvTaskRet != pdPASS) {
-        ESP_LOGE(TAG, "Task creation failed with: %d", srvTaskRet);
-    }
+    if(srvTaskRet != pdPASS){ESP_LOGE(TAG, "r50-bts-loop creation failed with: %d", srvTaskRet);}
 }
 
 static void initNVS(){
@@ -88,21 +89,26 @@ static void initNVS(){
     ESP_ERROR_CHECK(ret);
 }
 
-
 int app_main(void){
     initNVS();
 
-    init_kbus_service();
-    begin_cdc_emulator();
+    // Setup bluetooth command queue
+    bt_cmd_queue = xQueueCreate(4, sizeof(bt_cmd_type_t));
 
-#ifdef R50_WIFI_ENABLED
+    // Setup kbus service; has side-effect of initializing and starting UART driver.
+    init_kbus_service(bt_cmd_queue);
+    
+    // Start CD Changer emulator, naive approach for the time being. Sends `DEVICE STATUS READY` every 20 secs.
+    // begin_cdc_emulator(); // TODO: Implementation that responds to radio status messages like actual CDC.
+
+#ifdef R50_WIFI_ENABLED // Gating wifi and bt since there's still issues with them running concurrently.
     create_server_task();
     wifi_init_softap();
 #endif
 
 #ifdef R50_BT_ENABLED
     ESP_LOGI(TAG, "Starting bt services...");
-    bluetooth_services_setup();
+    bluetooth_services_setup(bt_cmd_queue);
     // Running btstack_run_loop_execute() as it's own task or in a wrapper wasn't working;
     // however, does work as lowest priority loop after other tasks. Going with this.
     ESP_LOGI(TAG, "btstack run loop");

@@ -8,29 +8,54 @@
 #include "kbus_service.h"
 #include "kbus_defines.h"
 
+#include "bt_commands.h"
+
 #define HERTZ(hz) ((1000/hz) / portTICK_RATE_MS)
 #define SECONDS(sec) ((sec*1000) / portTICK_RATE_MS)
+#define KBUS_TASK_PRIORITY 20
+#define CDC_EMU_PRIORITY 7
 
 static const char* TAG = "kbus_service";
-
+static QueueHandle_t bt_cmd_queue;
 static QueueHandle_t kbus_rx_queue;
 
-void kbus_rx_service();
-void encode_kbus_message(uint8_t src, uint8_t dst, uint8_t data[], uint8_t data_len, char* encoded_msg);
+static void kbus_rx_task();
+static void encode_kbus_message(uint8_t src, uint8_t dst, uint8_t data[], uint8_t data_len, char* encoded_msg);
 
-void init_kbus_service() {
+void init_kbus_service(QueueHandle_t bluetooth_queue) {
+    bt_cmd_queue = bluetooth_queue;
     kbus_rx_queue = xQueueCreate(4, sizeof(kbus_message_t));
-    xTaskCreatePinnedToCore(kbus_rx_service, "kbus_rx", 4096, NULL, configMAX_PRIORITIES, NULL, 1);
+    int tsk_ret = xTaskCreatePinnedToCore(kbus_rx_task, "kbus_rx_tsk", 4096, NULL, KBUS_TASK_PRIORITY, NULL, 1);
+    if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "kbus_rx_task creation failed with: %d", tsk_ret);}
     init_kbus_uart_driver(kbus_rx_queue);
 }
 
-void kbus_rx_service() {
+static void kbus_rx_task() {
     kbus_message_t message;
     while(1) {
         if(xQueueReceive(kbus_rx_queue, (void * )&message,  (portTickType)portMAX_DELAY)) {
-            ESP_LOGI(TAG, "data from driver:");
-            ESP_LOGI(TAG, "KBUS\t0x%02x -----> 0x%02x", message.src, message.dst);
-            ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_INFO);
+            ESP_LOGV(TAG, "data from driver:");
+            ESP_LOGV(TAG, "KBUS\t0x%02x -----> 0x%02x", message.src, message.dst);
+            ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_VERBOSE);
+
+            if(message.dst == LOC) {
+                ESP_LOGI(TAG, "Broadcast Message Recieved");
+                ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_WARN);
+            }
+
+            switch(message.src) {
+                case IKE:
+                    ESP_LOGI(TAG, "IKE Message Recieved");
+                    break;
+                case RAD:
+                    ESP_LOGI(TAG, "Radio Message Recieved");
+                    break;
+                case MFL:
+                    ESP_LOGI(TAG, "MFL Message Recieved");
+                    break;
+                default:
+                    ESP_LOGI(TAG, "Message Recieved from 0x%02x", message.src);
+            }
         }
     }
 }
@@ -42,7 +67,7 @@ static void cdc_emulator() {
     ESP_LOGD(cdc_emu_tag, "Sending CD Changer Startup Message: %s", cdc_msg);
     //* CD Changer Messages from http://web.archive.org/web/20110320053244/http://ibus.stuge.se/CD_Changer
     encode_kbus_message(CDC, LOC, (uint8_t[]){DEV_STAT_RDY, 0x01}, 2, cdc_msg); // Encode "Device status Ready After Reset"
-    kbus_send_bytes(cdc_emu_tag, cdc_msg, 6);                           // Send "After Reset" message on boot
+    kbus_send_bytes(cdc_emu_tag, cdc_msg, 6);                                   // Send "After Reset" message on boot
     encode_kbus_message(CDC, LOC, (uint8_t[]){DEV_STAT_RDY, 0x00}, 2, cdc_msg); // Encode "Device status Ready"
     vTaskDelay(SECONDS(20));
 
@@ -56,10 +81,10 @@ static void cdc_emulator() {
 
 void begin_cdc_emulator() {
     ESP_LOGI(TAG, "Creating CD Changer Emulator");
-    xTaskCreatePinnedToCore(cdc_emulator, "cdc_emu", 4096, NULL, configMAX_PRIORITIES, NULL, 1);
+    xTaskCreatePinnedToCore(cdc_emulator, "cdc_emu", 4096, NULL, CDC_EMU_PRIORITY, NULL, 1);
 }
 
-void encode_kbus_message(uint8_t src, uint8_t dst, uint8_t data[], uint8_t data_len, char* encoded_msg) {
+static void encode_kbus_message(uint8_t src, uint8_t dst, uint8_t data[], uint8_t data_len, char* encoded_msg) {
  
     uint8_t msg_len = data_len + 2; //Base message length + destination & checksum bytes.
 
@@ -82,6 +107,6 @@ void encode_kbus_message(uint8_t src, uint8_t dst, uint8_t data[], uint8_t data_
     ESP_LOGD(TAG, "%02x %02x %02x %02x %02x %02x", src, msg_len, dst, data[0], data[1], checksum);
 }
 
-void decode_kbus_message(uint8_t* data, uint8_t rx_bytes) {
+void decode_kbus_message(uint8_t* data, uint8_t msg_length, uint8_t checksum) {
 
 }

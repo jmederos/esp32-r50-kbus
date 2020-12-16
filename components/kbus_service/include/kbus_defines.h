@@ -59,9 +59,9 @@
 #define BUS_STAT_REQ        0x03    //"Bus status request"
 #define BUS_STAT_RPLY       0x04    //"Bus status"
 #define DIAG_READ_MEM       0x06    //"DIAG read memory"
-#define DIAG_WRTE_MEM       0x07    //"DIAG write memory"
+#define DIAG_WRTE_MEM_1     0x07    //"DIAG write memory"
 #define DIAG_READ_CODING    0x08    //"DIAG read coding data"
-#define DIAG_WRTE_MEM       0x09    //"DIAG write coding data"
+#define DIAG_WRTE_MEM_2     0x09    //"DIAG write coding data"
 #define VEHICLE_CTRL        0x0C    //Vehicle control
 
 #define IGN_STAT_REQ        0x10    //"Ignition status request"

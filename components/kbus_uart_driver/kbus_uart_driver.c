@@ -95,9 +95,10 @@ static void rx_task() {
                 case UART_DATA:
                     gpio_set_level(LED_PIN, 1); // Turn on module LED
 
-                    uart_read_bytes(SERVICE_UART, &msg_header, 2, 0);           // Read header: src_addr + msg_len
+                    uart_read_bytes(SERVICE_UART, msg_header, 2, 0);           // Read header: src_addr + msg_len
                     uart_read_bytes(SERVICE_UART, msg_buf, msg_header[1], 0);   // Only read the bytes the message says to read
 
+                    rx_message.src = msg_header[0];
                     rx_message.msg_len = msg_header[1];
                     rx_message.body_len = msg_header[1] - 2;                    // Body length for later iterating
                     rx_message.dst = msg_buf[0];                                // Copy message dst address to struct
