@@ -3,7 +3,10 @@
 
 typedef enum {
     BT_CMD_NOOP = 0x00,
+    BT_CONNECT,
+    BT_DISCONNECT,
     AVRCP_PLAY,
+    AVRCP_PAUSE,
     AVRCP_STOP,
     AVRCP_FF_START,
     AVRCP_FF_STOP,

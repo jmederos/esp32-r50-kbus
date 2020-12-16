@@ -5,7 +5,17 @@
 #include <stdint.h>
 
 /* Setup AVRCP service */
-int avrcp_setup(void);
+int avrcp_setup(char* announce_str, char* cxn_address);
+
+uint8_t avrcp_ctl_connect();
+
+uint8_t avrcp_ctl_disconnect();
+
+uint8_t avrcp_ctl_play();
+
+uint8_t avrcp_ctl_pause();
+
+uint8_t avrcp_ctl_stop();
 
 uint8_t avrcp_ctl_next();
 

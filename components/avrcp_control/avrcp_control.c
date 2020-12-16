@@ -23,6 +23,8 @@ static uint8_t companies[] = {
     BLUETOOTH_COMPANY_ID_APPLE_INC
 };
 
+static bd_addr_t device_addr;
+
 static btstack_packet_callback_registration_t hci_event_callback_registration;
 
 static uint8_t  sdp_avrcp_target_service_buffer[150];
@@ -34,7 +36,6 @@ static uint8_t  avrcp_connected = 0;
 static uint8_t  avrcp_subevent_value[100];
 
 /* Setup AVRCP service */
-int avrcp_setup(void);
 static void hci_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
 static void avrcp_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
 static void avrcp_controller_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
@@ -42,7 +43,7 @@ static void avrcp_target_packet_handler(uint8_t packet_type, uint16_t channel, u
 static void avrcp_volume_changed(uint8_t volume);
 
 
-int avrcp_setup(void){
+int avrcp_setup(char* announce_str, char* cxn_address){
     
     // Initialize AVRCP service
     avrcp_init();
@@ -80,7 +81,7 @@ int avrcp_setup(void){
     // Set local name with a template Bluetooth address, that will be automatically
     // replaced with a actual address once it is available, i.e. when BTstack boots
     // up and starts talking to a Bluetooth module.
-    gap_set_local_name("R50 Control"); //TODO: Add this to menuconfig / store in NVS
+    gap_set_local_name(announce_str);
     gap_discoverable_control(1);
     gap_set_class_of_device(0x240418);
 
@@ -88,7 +89,30 @@ int avrcp_setup(void){
     // hci_event_callback_registration.callback = &hci_packet_handler;
     // hci_add_event_handler(&hci_event_callback_registration);
 
+    // Parse and store connection address
+    sscanf_bd_addr(cxn_address, device_addr);
+
     return 0;
+}
+
+uint8_t avrcp_ctl_connect() {
+    return avrcp_connect(device_addr, &avrcp_cid);
+}
+
+uint8_t avrcp_ctl_disconnect() {
+    return avrcp_disconnect(avrcp_cid);
+}
+
+uint8_t avrcp_ctl_play() {
+    return avrcp_controller_play(avrcp_cid);
+}
+
+uint8_t avrcp_ctl_pause() {
+    return avrcp_controller_pause(avrcp_cid);
+}
+
+uint8_t avrcp_ctl_stop() {
+    return avrcp_controller_stop(avrcp_cid);
 }
 
 uint8_t avrcp_ctl_next() {
@@ -100,7 +124,7 @@ uint8_t avrcp_ctl_prev() {
 }
 
 uint8_t avrcp_ctl_start_ff() {
-    return avrcp_controller_press_and_hold_rewind(avrcp_cid);
+    return avrcp_controller_press_and_hold_fast_forward(avrcp_cid);
 }
 
 uint8_t avrcp_ctl_start_rwd() {

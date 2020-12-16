@@ -125,10 +125,16 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
                 //* A button down event received, let's store it.
 
                 case 0x01: // "search up pressed"
+                case 0x02: // "R/T pressed"
                 case 0x08: // "search down pressed"
                     ESP_LOGD(TAG, "MFL Up or Down short press");
                     last_mfl_cmd[0] = mfl_cmd[0];
                     last_mfl_cmd[1] = mfl_cmd[1];
+                    break;
+                case 0x12: // "R/T pressed long"
+                    last_mfl_cmd[0] = mfl_cmd[0];
+                    last_mfl_cmd[1] = mfl_cmd[1];
+                    bt_command = AVRCP_PLAY;
                     break;
                 case 0x11: // "search up pressed long"
                     ESP_LOGD(TAG, "MFL Up long press");
@@ -145,6 +151,7 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
 
                 //* A button up event, let's check previous state.
                 case 0x21: // "search up released"
+                case 0x22: // "R/T released"
                 case 0x28: // "search down released"
                     ESP_LOGD(TAG, "MFL arrow button released");
                     if(last_mfl_cmd[0] == mfl_cmd[0]){
@@ -153,8 +160,14 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
                             case 0x01:
                                 bt_command = AVRCP_NEXT;
                                 break;
+                            case 0x02:
+                                bt_command = AVRCP_STOP;
+                                break;
                             case 0x11:
                                 bt_command = AVRCP_FF_STOP;
+                                break;
+                            case 0x12:
+                                // NOOP: Long press AVRCP_PLAY handled during previous event
                                 break;
                             case 0x08:
                                 bt_command = AVRCP_PREV;
@@ -163,7 +176,7 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
                                 bt_command = AVRCP_RWD_STOP;
                                 break;
                             default:
-                                ESP_LOGW(TAG, "Unexpected previous event: 0x%02x", mfl_cmd[1]);
+                                ESP_LOGW(TAG, "Mismatched previous event! Expected 0x%02x, got 0x%02x", last_mfl_cmd[1], mfl_cmd[1]);
                                 free_last_mfl();
                                 break;
                         }

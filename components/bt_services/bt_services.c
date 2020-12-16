@@ -30,9 +30,9 @@ int bluetooth_services_setup(QueueHandle_t bluetooth_queue){
     l2cap_init();
     // Initialize SDP
     sdp_init();
-    // Setup avrcp
-    avrcp_setup();
-
+    // Setup avrcp ↙↙↙announce_str  ↙↙↙autoconnect device address
+    avrcp_setup("R50 Control", "00:00:00:00:00:00"); //TODO: Add this to menuconfig / store in NVS
+    
     // Setup bt command handler
     bt_cmd_queue = bluetooth_queue;
     setup_cmd_task();
@@ -57,6 +57,26 @@ static void bt_cmd_task() {
 
         if(xQueueReceive(bt_cmd_queue, (void * )&command,  (portTickType)portMAX_DELAY)) {    
             switch(command) {
+                case BT_CONNECT:
+                    ESP_LOGD(TAG, "BT Attempting Connect");
+                    avrcp_ctl_connect();
+                    break;
+                case BT_DISCONNECT:
+                    ESP_LOGD(TAG, "BT Attempting Disconnect");
+                    avrcp_ctl_disconnect();
+                    break;
+                case AVRCP_PLAY:
+                    avrcp_ctl_play();
+                    ESP_LOGD(TAG, "BT Play Requested");
+                    break;
+                case AVRCP_PAUSE:
+                    ESP_LOGD(TAG, "BT Pause Requested");
+                    avrcp_ctl_pause();
+                    break;
+                case AVRCP_STOP:
+                    ESP_LOGD(TAG, "BT STOP Requested");
+                    avrcp_ctl_stop();
+                    break;
                 case AVRCP_NEXT:
                     ESP_LOGD(TAG, "BT Next Requested");
                     avrcp_ctl_next();
@@ -82,7 +102,7 @@ static void bt_cmd_task() {
                     avrcp_ctl_end_long_press();
                     break;
                 default:
-                    ESP_LOGD(TAG, "BT command recieved 0x%02x", command);
+                    ESP_LOGD(TAG, "No action registered for command 0x%02x", command);
             }
         }
     }
