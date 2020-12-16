@@ -1,5 +1,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_system.h"
 #include "esp_log.h"
 
@@ -12,16 +13,26 @@
 
 static const char* TAG = "kbus_service";
 
-void kbus_rx_service(uint8_t* data, uint8_t rx_bytes);
+static QueueHandle_t kbus_rx_queue;
+
+void kbus_rx_service();
 void encode_kbus_message(uint8_t src, uint8_t dst, uint8_t data[], uint8_t data_len, char* encoded_msg);
 
 void init_kbus_service() {
-    init_kbus_uart_driver(&kbus_rx_service, 25); //TODO: Configurable polling rate
+    kbus_rx_queue = xQueueCreate(4, sizeof(kbus_message_t));
+    xTaskCreatePinnedToCore(kbus_rx_service, "kbus_rx", 4096, NULL, configMAX_PRIORITIES, NULL, 1);
+    init_kbus_uart_driver(kbus_rx_queue);
 }
 
-void kbus_rx_service(uint8_t* data, uint8_t rx_bytes) {
-    ESP_LOGI(TAG, "data from driver:");
-    ESP_LOG_BUFFER_HEXDUMP(TAG, data, rx_bytes, ESP_LOG_INFO);
+void kbus_rx_service() {
+    kbus_message_t message;
+    while(1) {
+        if(xQueueReceive(kbus_rx_queue, (void * )&message,  (portTickType)portMAX_DELAY)) {
+            ESP_LOGI(TAG, "data from driver:");
+            ESP_LOGI(TAG, "KBUS\t0x%02x -----> 0x%02x", message.src, message.dst);
+            ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_INFO);
+        }
+    }
 }
 
 static void cdc_emulator() {
@@ -30,9 +41,9 @@ static void cdc_emulator() {
     
     ESP_LOGD(cdc_emu_tag, "Sending CD Changer Startup Message: %s", cdc_msg);
     //* CD Changer Messages from http://web.archive.org/web/20110320053244/http://ibus.stuge.se/CD_Changer
-    encode_kbus_message(CDC, LOC, (uint8_t[]){0x02, 0x01}, 2, cdc_msg); // Encode "Device status Ready After Reset"
+    encode_kbus_message(CDC, LOC, (uint8_t[]){DEV_STAT_RDY, 0x01}, 2, cdc_msg); // Encode "Device status Ready After Reset"
     kbus_send_bytes(cdc_emu_tag, cdc_msg, 6);                           // Send "After Reset" message on boot
-    encode_kbus_message(CDC, LOC, (uint8_t[]){0x02, 0x00}, 2, cdc_msg); // Encode "Device status Ready"
+    encode_kbus_message(CDC, LOC, (uint8_t[]){DEV_STAT_RDY, 0x00}, 2, cdc_msg); // Encode "Device status Ready"
     vTaskDelay(SECONDS(20));
 
     while(1) {

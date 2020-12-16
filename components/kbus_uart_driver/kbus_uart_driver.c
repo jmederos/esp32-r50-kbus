@@ -19,13 +19,15 @@
 #define KBUS_TX_TEST_IS_ENABLED flase
 
 static const int RX_BUF_SIZE = 1024;
+static const int TX_BUF_SIZE = 512;
 static const char* TAG = "kbus_driver";
-static void (*rx_handler)(uint8_t* data, uint8_t rx_bytes) = NULL;
-static uint8_t rx_polling = 0;
+
+static QueueHandle_t kbus_rx_queue;
+static QueueHandle_t uart_rx_queue;
 
 static void rx_task();
 
-void init_kbus_uart_driver(void (*rx_callback)(uint8_t* data, uint8_t rx_bytes), uint8_t rx_poll_hz) {
+void init_kbus_uart_driver(QueueHandle_t kbus_queue) {
     //* Configuring based on i/k bus spec:
     //* http://web.archive.org/web/20070513012128/http://www.openbmw.org/bus/
     ESP_LOGI(TAG, "Initializing Kbus UART");
@@ -43,20 +45,19 @@ void init_kbus_uart_driver(void (*rx_callback)(uint8_t* data, uint8_t rx_bytes),
     // uart_set_pin() sets GPIO_PULLUP_ONLY on RX, not TX. Need it to avoid taking control of k-bus when only listening.
     ESP_ERROR_CHECK(gpio_set_pull_mode(TXD_PIN, GPIO_PULLUP_ONLY));
     // We won't use a buffer for sending data.
-    ESP_ERROR_CHECK(uart_driver_install(SERVICE_UART, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
+    ESP_ERROR_CHECK(uart_driver_install(SERVICE_UART, RX_BUF_SIZE, TX_BUF_SIZE, 32, &uart_rx_queue, 0));
     // Make sure we're in standard uart mode
     ESP_ERROR_CHECK(uart_set_mode(SERVICE_UART, UART_MODE_UART));
 
     ESP_LOGI(TAG, "Creating kbus_uart_driver rx task");
-    xTaskCreatePinnedToCore(rx_task, "uart_rx_task", RX_BUF_SIZE*2, NULL, configMAX_PRIORITIES, NULL, 1);
+    xTaskCreatePinnedToCore(rx_task, "uart_rx_task", RX_BUF_SIZE*4, NULL, configMAX_PRIORITIES, NULL, 1);
 
     // Setup onboard LED
     gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(LED_PIN, 0);
 
-    // Store RX Handler and RX polling rate
-    rx_handler = rx_callback;
-    rx_polling = rx_poll_hz;
+    // Store kbus message queue
+    kbus_rx_queue = kbus_queue;
 }
 
 int kbus_send_str(const char* logName, const char* str) {
@@ -77,23 +78,53 @@ int kbus_send_bytes(const char* logName, const char* bytes, uint8_t numBytes) {
 /**
  * @brief Task that handles incoming kbus data
  */
-static void rx_task()
-{
+static void rx_task() {
     static const char *RX_TASK_TAG = "RX_TASK";
-    esp_log_level_set(RX_TASK_TAG, ESP_LOG_INFO);
-    uint8_t* data = (uint8_t*) malloc(RX_BUF_SIZE+1);
-    while (1) {
-        const int rxBytes = uart_read_bytes(SERVICE_UART, data, RX_BUF_SIZE, HERTZ(rx_polling));
-        gpio_set_level(LED_PIN, 0);
-        if (rxBytes > 0) {
-            gpio_set_level(LED_PIN, 1);
-            data[rxBytes] = 0;
-            ESP_LOGD(RX_TASK_TAG, "Read %02x bytes from kbus", rxBytes);
-            ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, data, rxBytes, ESP_LOG_DEBUG);
-            if(rx_handler != NULL) {
-                rx_handler(data, rxBytes);
+
+    uart_event_t event;
+    kbus_message_t rx_message;
+    uint8_t msg_header[2] = {0,0};
+    uint8_t* msg_buf = (uint8_t*) malloc(257); // Size of max possible kbus message
+    
+    while(1) {
+        if(xQueueReceive(uart_rx_queue, (void * )&event, (portTickType)portMAX_DELAY)) {
+            bzero(msg_buf, 257);
+            bzero(rx_message.body, sizeof(rx_message.body));
+
+            switch(event.type) {
+                case UART_DATA:
+                    gpio_set_level(LED_PIN, 1); // Turn on module LED
+
+                    uart_read_bytes(SERVICE_UART, &msg_header, 2, 0);           // Read header: src_addr + msg_len
+                    uart_read_bytes(SERVICE_UART, msg_buf, msg_header[1], 0);   // Only read the bytes the message says to read
+
+                    rx_message.msg_len = msg_header[1];
+                    rx_message.body_len = msg_header[1] - 2;                    // Body length for later iterating
+                    rx_message.dst = msg_buf[0];                                // Copy message dst address to struct
+                    memcpy(rx_message.body, msg_buf + 1, msg_header[1] - 1);    // Copy message body to struct using byte offsets
+                    rx_message.chksum = msg_buf[msg_header[1] - 1];             // Copy message checksum to struct
+
+                    ESP_LOGD(RX_TASK_TAG, "Read %d bytes from UART", event.size);
+                    ESP_LOGD(RX_TASK_TAG, "KBUS\t0x%02x----->0x%02x\tLength: %d\tCHK:0x%02x", rx_message.src, rx_message.dst, rx_message.body_len+2, rx_message.chksum);
+                    ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, rx_message.body, event.size-4, ESP_LOG_DEBUG);
+
+                    xQueueSend(kbus_rx_queue, &rx_message, 1600);
+
+                    gpio_set_level(LED_PIN, 0);
+                    break;
+                case UART_PARITY_ERR:
+                case UART_FRAME_ERR:
+                case UART_FIFO_OVF:
+                case UART_BUFFER_FULL:
+                    ESP_LOGE(RX_TASK_TAG, "UART Error: %d", event.type);
+                    break;
+
+                default:
+                    ESP_LOGI(RX_TASK_TAG, "Other UART Event: %d", event.type);
+                    break;
             }
         }
     }
-    free(data);
+    free(msg_buf);
+    msg_buf=NULL;
 }

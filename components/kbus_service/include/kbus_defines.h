@@ -50,7 +50,9 @@
 
 /** 
  ** kbus command definitions from
- ** http://web.archive.org/web/20110318185808/http://ibus.stuge.se/IBus_Messages
+ * http://web.archive.org/web/20110318185808/http://ibus.stuge.se/IBus_Messages
+ ** AND
+ * Testing w/NavCoder
  */
 #define DEV_STAT_REQ        0x01    //Device status request
 #define DEV_STAT_RDY        0x02    //Device status ready
@@ -77,11 +79,16 @@
 #define GONG                0x1C    //"Gong"
 #define TEMP_REQ            0x1D    //Temperature request
 #define UTC_DATE_TIME       0x1F    //UTC time and date
+#define DISPLAY_STATUS      0x20    //Display Status
+#define MENU_TXT            0x21    //Menu Text
+#define TXT_DISPLAY_CONF    0x22    //Text display confirmation
 #define UPDATE_MID          0x23    //Update MID
 #define UPDATE_ANZV         0x24    //Update ANZV
 #define OBC_UPDATE          0x2A    //On-Board Computer State Update
+#define TEL_LEDS            0x2B    //Telephone LED Indicators
+#define TEL_STATUS          0x2C    //Telephone status
 #define DSP_EQ_BUTT         0x34    //DSP Equalizer Button
-#define CD_STAT_REQ         0x38    //CD status request
+#define CD_CTRL_REQ         0x38    //CD Control Message
 #define CD_STAT_RPLY        0x39    //CD status
 #define OBC_SET_DATA        0x40    //Set On-Board Computer Data
 #define OBC_DATA_REQ        0x41    //On-Board Computer Data Request

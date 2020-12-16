@@ -1,14 +1,23 @@
 #ifndef KBUS_UART_DRIVER_H
 #define KBUS_UART_DRIVER_H
 
+typedef struct {
+    uint8_t body[253];
+
+    uint8_t src;
+    uint8_t body_len;
+    uint8_t msg_len;
+    uint8_t dst;
+    uint8_t chksum;
+}kbus_message_t; 
+
 /**
  * @brief Initializes UART_2 pins, installs driver, creates separate tasks for tx and rx.
  * 
  * @note aborts if any of the uart calls fails.
  * 
- * TODO: graceful error handling.
  */
-void init_kbus_uart_driver(void (*rx_callback)(uint8_t* data, uint8_t rx_bytes), uint8_t rx_poll_hz);
+void init_kbus_uart_driver(QueueHandle_t kbus_queue);
 
 /**
  * @brief Writes string to kbus UART.
