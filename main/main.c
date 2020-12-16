@@ -56,7 +56,7 @@
 #include "bt_commands.h"
 
 // TODO: Add these as menuconfig items
-// #define R50_BT_ENABLED
+#define R50_BT_ENABLED
 //#define R50_WIFI_ENABLED
 
 static const char* TAG = "r50-main";

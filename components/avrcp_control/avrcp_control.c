@@ -52,7 +52,7 @@ int avrcp_setup(void){
     avrcp_controller_init();
     avrcp_controller_register_packet_handler(&avrcp_controller_packet_handler);
     
-     // Initialize AVRCP Target
+    // Initialize AVRCP Target
     // avrcp_target_init();
     // avrcp_target_register_packet_handler(&avrcp_target_packet_handler);
 
@@ -90,7 +90,26 @@ int avrcp_setup(void){
 
     return 0;
 }
-/* LISTING_END */
+
+uint8_t avrcp_ctl_next() {
+    return avrcp_controller_forward(avrcp_cid);
+}
+
+uint8_t avrcp_ctl_prev() {
+    return avrcp_controller_backward(avrcp_cid);
+}
+
+uint8_t avrcp_ctl_start_ff() {
+    return avrcp_controller_press_and_hold_rewind(avrcp_cid);
+}
+
+uint8_t avrcp_ctl_start_rwd() {
+    return avrcp_controller_press_and_hold_rewind(avrcp_cid);
+}
+
+uint8_t avrcp_ctl_end_long_press() {
+    return avrcp_controller_release_press_and_hold_cmd(avrcp_cid);
+}
 
 static void avrcp_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size){
     UNUSED(channel);

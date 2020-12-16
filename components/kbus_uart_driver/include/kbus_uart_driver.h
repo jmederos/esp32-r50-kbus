@@ -19,17 +19,7 @@ typedef struct {
  */
 void init_kbus_uart_driver(QueueHandle_t kbus_queue);
 
-/**
- * @brief Writes string to kbus UART.
- * 
- * @param logName
- * @param data
- * 
- * @returns Number of bytes transmitted
- * 
- */
-int kbus_send_str(const char* logName, const char* str);
-
+// TODO: Refactor kbus sending w/queue instead of a call
 /**
  * @brief Writes `numBytes` bytes to kbus UART.
  * 

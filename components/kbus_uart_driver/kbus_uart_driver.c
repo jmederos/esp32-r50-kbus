@@ -50,7 +50,7 @@ void init_kbus_uart_driver(QueueHandle_t kbus_queue) {
     ESP_ERROR_CHECK(uart_set_mode(SERVICE_UART, UART_MODE_UART));
 
     ESP_LOGI(TAG, "Creating kbus_uart_driver rx task");
-    xTaskCreatePinnedToCore(rx_task, "uart_rx_task", RX_BUF_SIZE*4, NULL, configMAX_PRIORITIES, NULL, 1);
+    xTaskCreatePinnedToCore(rx_task, "uart_rx_task", RX_BUF_SIZE*4, NULL, configMAX_PRIORITIES-1, NULL, 1);
 
     // Setup onboard LED
     gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
@@ -58,14 +58,6 @@ void init_kbus_uart_driver(QueueHandle_t kbus_queue) {
 
     // Store kbus message queue
     kbus_rx_queue = kbus_queue;
-}
-
-int kbus_send_str(const char* logName, const char* str) {
-    ESP_LOGV(logName, "Writing string to kbus");
-    const int len = strlen(str); //! /0 delimited char array.
-    const int txBytes = uart_write_bytes(SERVICE_UART, str, len);
-    ESP_LOGD(logName, "Wrote %02x bytes to kbus", txBytes);
-    return txBytes;
 }
 
 int kbus_send_bytes(const char* logName, const char* bytes, uint8_t numBytes) {
@@ -104,7 +96,7 @@ static void rx_task() {
                     rx_message.dst = msg_buf[0];                                // Copy message dst address to struct
                     memcpy(rx_message.body, msg_buf + 1, msg_header[1] - 1);    // Copy message body to struct using byte offsets
                     rx_message.chksum = msg_buf[msg_header[1] - 1];             // Copy message checksum to struct
-
+// TODO: Checksum verification here instead of in next layer up. That way only valid messages are put on the queue
                     ESP_LOGD(RX_TASK_TAG, "Read %d bytes from UART", event.size);
                     ESP_LOGD(RX_TASK_TAG, "KBUS\t0x%02x----->0x%02x\tLength: %d\tCHK:0x%02x", rx_message.src, rx_message.dst, rx_message.body_len+2, rx_message.chksum);
                     ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, rx_message.body, event.size-4, ESP_LOG_DEBUG);
