@@ -16,7 +16,7 @@ void kbus_rx_service(uint8_t* data, uint8_t rx_bytes);
 void encode_kbus_message(uint8_t src, uint8_t dst, uint8_t data[], uint8_t data_len, char* encoded_msg);
 
 void init_kbus_service() {
-    init_kbus_uart_driver(&kbus_rx_service, 20); //TODO: Configurable polling rate
+    init_kbus_uart_driver(&kbus_rx_service, 25); //TODO: Configurable polling rate
 }
 
 void kbus_rx_service(uint8_t* data, uint8_t rx_bytes) {
@@ -33,6 +33,7 @@ static void cdc_emulator() {
     encode_kbus_message(CDC, LOC, (uint8_t[]){0x02, 0x01}, 2, cdc_msg); // Encode "Device status Ready After Reset"
     kbus_send_bytes(cdc_emu_tag, cdc_msg, 6);                           // Send "After Reset" message on boot
     encode_kbus_message(CDC, LOC, (uint8_t[]){0x02, 0x00}, 2, cdc_msg); // Encode "Device status Ready"
+    vTaskDelay(SECONDS(20));
 
     while(1) {
         ESP_LOGD(cdc_emu_tag, "Sending CD Changer Reply Message: %s", cdc_msg);
@@ -48,7 +49,7 @@ void begin_cdc_emulator() {
 }
 
 void encode_kbus_message(uint8_t src, uint8_t dst, uint8_t data[], uint8_t data_len, char* encoded_msg) {
-
+ 
     uint8_t msg_len = data_len + 2; //Base message length + destination & checksum bytes.
 
     uint8_t checksum = 0x00;
