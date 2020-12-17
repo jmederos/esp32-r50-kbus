@@ -27,10 +27,10 @@ K-bus/I-bus to Bluetooth bridge for Mini/BMWs. Based on ESP32.
 
 #### Candidate K-bus ICs
 
-* [ON Semi NCV7428D13R2G](https://www.digikey.com/en/products/detail/on-semiconductor/5022588)
-* [NXP TJA1021T](https://www.digikey.com/en/products/detail/nxp-usa-inc/2034448)
-* [TI SN65HVDA195QDRQ1](https://www.digikey.com/en/products/detail/texas-instruments/2094636)
-* [Microchip MCP2025-330E-SN](https://www.digikey.com/en/products/detail/microchip-technology/3543134)
+* [ON Semi NCV7428D13R2G](https://www.digikey.com/en/products/detail/on-semiconductor/5022588) ❓
+* [NXP TJA1021T](https://www.digikey.com/en/products/detail/nxp-usa-inc/2034448) ❓
+* [TI SN65HVDA195QDRQ1](https://www.digikey.com/en/products/detail/texas-instruments/2094636) ✔
+* [Microchip MCP2025-330E-SN](https://www.digikey.com/en/products/detail/microchip-technology/3543134) ❓
 
 ### Software
 
@@ -68,11 +68,14 @@ _Note: Helper scripts in tools folder assume a WSL Ubuntu install w/ESP32 on Win
 * [CD changer installation instructions](https://new.minimania.com/images/instructions/OEM%20CD%20Changer.pdf)
 
 ## Roadmap
-* ~~Proof of concept, control phone via AVRCP~~
-* K-bus proof concept, pickup MFL messages
-* Write to radio head unit display
-* ANCS Support & update radio display w/push notification
-* i2s DAC for fully integrated solution?... 🤔🤷🏽‍♂
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Software POC: control phone via AVRCP w/o A2DP advertised. | 👌 | _Although part of the BT spec, example implementations on AVRCP-only are hard to come by._ |
+| Hardware POC: acquire + test k-line transceivers. | 🙌 |   |
+| K-bus proof concept, pickup MFL messages. | 👍 | _Have yet to test in vehicle, works in mockup w/Navcoder + iPhone streaming to a BT headphone amp._ |
+| Write to radio head unit display |   |   |
+| ANCS Support & update radio display w/push notification | 🤞 |   |
+| i2s DAC for fully integrated solution?...| 🤔🤷🏽‍♂ | _unlikely_ |
 
 _See the [open issues](https://github.com/jmederos/esp32-r50-kbus/issues) for a list of proposed features (and known issues)._
 
