@@ -2,7 +2,7 @@ menu "K-Bus WiFi Config"
 
     config ESP_WIFI_SSID
         string "WiFi SSID"
-        default "MiniControl"
+        default "Mini Cooper Control"
         help
             SSID (network name) for the example to connect to.
 

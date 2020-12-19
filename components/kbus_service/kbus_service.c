@@ -47,6 +47,7 @@ static void kbus_rx_task() {
                 case CDC:
                     ESP_LOGI(TAG, "Message for CD Changer Received");
                     ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_INFO);
+                    //TODO: cdc_emulator() here
                     break;
                 default:
                     break;
@@ -54,13 +55,13 @@ static void kbus_rx_task() {
 
             switch(message.src) {
                 case IKE:
-                    ESP_LOGI(TAG, "IKE Message Received");
+                    ESP_LOGI(TAG, "IKE -> 0x%02x Message Received", message.dst);
                     break;
                 case RAD:
-                    ESP_LOGI(TAG, "Radio Message Received");
+                    ESP_LOGI(TAG, "Radio -> 0x%02x Message Received", message.dst);
                     break;
                 case MFL:
-                    ESP_LOGI(TAG, "Steering Wheel Message Received");
+                    ESP_LOGI(TAG, "MFL -> 0x%02x Message Received", message.dst);
                     mfl_handler((uint8_t[2]){message.body[0], message.body[1]});
                     break;
                 default:
@@ -71,6 +72,10 @@ static void kbus_rx_task() {
 }
 
 static void cdc_emulator() {
+    /**
+    * TODO: Listen for RAD -> CDC   "Device status request"
+    *                 0x68 -> 0x18   0x01
+    */ 
     static const char *cdc_emu_tag = "CDC_EMU";
     char *cdc_msg = (char*) malloc(6);
     
@@ -110,7 +115,7 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
     }
 
 // TODO: Addresses lend themselves to bit twiddling stuff instead of this. Look into it in a revision ☜(ﾟヮﾟ☜)
-    switch(mfl_cmd[0]) {
+    switch(mfl_cmd[0]) { //? State machine?...
         case 0x3B:
             ESP_LOGI(TAG, "MFL -> RAD/TEL Button Event");
             
@@ -126,11 +131,12 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
 
                 case 0x01: // "search up pressed"
                 case 0x02: // "R/T pressed"
-                case 0x08: // "search down pressed"
+                case 0x08: { // "search down pressed"
                     ESP_LOGD(TAG, "MFL Up or Down short press");
                     last_mfl_cmd[0] = mfl_cmd[0];
                     last_mfl_cmd[1] = mfl_cmd[1];
-                    break;
+                    return; // Return, don't need to take any further action other than storing opeing event.
+                }
                 case 0x12: // "R/T pressed long"
                     last_mfl_cmd[0] = mfl_cmd[0];
                     last_mfl_cmd[1] = mfl_cmd[1];

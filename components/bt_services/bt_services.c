@@ -13,6 +13,15 @@
 
 #define BT_CMD_TASK_PRIORITY 10
 
+#define ANNOUNCE_STR        CONFIG_BT_ANNOUNCE_STR
+#define SHOULD_AUTOCONNECT  CONFIG_BT_AUTOCONNECT
+
+#if SHOULD_AUTOCONNECT
+    #define AUTOCONNECT_ADDR    CONFIG_BT_AUTOCONNECT_ADDR
+#else
+    #define AUTOCONNECT_ADDR "00:00:00:00:00:00"
+#endif
+
 static const char* TAG = "bt-services";
 static QueueHandle_t bt_cmd_queue;
 
@@ -31,7 +40,7 @@ int bluetooth_services_setup(QueueHandle_t bluetooth_queue){
     // Initialize SDP
     sdp_init();
     // Setup avrcp ↙↙↙announce_str  ↙↙↙autoconnect device address
-    avrcp_setup("R50 Control", "00:00:00:00:00:00"); //TODO: Add this to menuconfig / store in NVS
+    avrcp_setup(ANNOUNCE_STR, AUTOCONNECT_ADDR); //TODO: store in NVS for dynamic configuration w/web server
     
     // Setup bt command handler
     bt_cmd_queue = bluetooth_queue;
@@ -40,6 +49,12 @@ int bluetooth_services_setup(QueueHandle_t bluetooth_queue){
     // Turn on bluetooth
     ESP_LOGI(TAG, "Bluetooth HCI on");
     hci_power_control(HCI_POWER_ON);
+
+    //? In case web + bt don't work simulatneously, maybe add SSP or BTLE service for config instead
+
+    #if SHOULD_AUTOCONNECT //If autoconnect is enabled, attempt to connect right after hci power on
+        avrcp_ctl_connect();
+    #endif
 
     return 0;
 }

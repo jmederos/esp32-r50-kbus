@@ -1,0 +1,22 @@
+menu "K-Bus Bluetooth Service"
+    
+    config BT_ANNOUNCE_STR
+        string "BT Announce String"
+        default "Mini Cooper AVRCP"
+        help
+            Bluetooth announce string; how ESP32 shows up to devices.
+
+    config BT_AUTOCONNECT
+        bool "Autoconnect"
+        default n
+        help
+            "Should ESP32 autoconnect to address defined in BT_AUTOCONNECT_ADDR?"
+
+    config BT_AUTOCONNECT_ADDR
+        string "Autoconnect Address"
+        default "00:00:00:00:00:00"
+        depends on BT_AUTOCONNECT
+        help
+            "Address ESP32 will attempt to connect to."
+
+endmenu
