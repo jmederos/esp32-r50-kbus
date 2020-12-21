@@ -18,17 +18,19 @@
 static const char* TAG = "kbus_service";
 static QueueHandle_t bt_cmd_queue;
 static QueueHandle_t kbus_rx_queue;
+static QueueHandle_t kbus_tx_queue;
 
 static void kbus_rx_task();
-static void encode_kbus_message(uint8_t src, uint8_t dst, uint8_t data[], uint8_t data_len, char* encoded_msg);
 static void mfl_handler(uint8_t mfl_cmd[2]);
 
 void init_kbus_service(QueueHandle_t bluetooth_queue) {
     bt_cmd_queue = bluetooth_queue;
     kbus_rx_queue = xQueueCreate(4, sizeof(kbus_message_t));
+    kbus_tx_queue = xQueueCreate(2, sizeof(kbus_message_t));
+
     int tsk_ret = xTaskCreatePinnedToCore(kbus_rx_task, "kbus_rx_tsk", 4096, NULL, KBUS_TASK_PRIORITY, NULL, 1);
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "kbus_rx_task creation failed with: %d", tsk_ret);}
-    init_kbus_uart_driver(kbus_rx_queue);
+    init_kbus_uart_driver(kbus_rx_queue, kbus_tx_queue);
 }
 
 static void kbus_rx_task() {
@@ -36,7 +38,7 @@ static void kbus_rx_task() {
     while(1) {
         if(xQueueReceive(kbus_rx_queue, (void * )&message,  (portTickType)portMAX_DELAY)) {
             ESP_LOGD(TAG, "data from driver:");
-            ESP_LOGD(TAG, "KBUS\t0x%02x -----> 0x%02x", message.src, message.dst);
+            ESP_LOGD(TAG, "KBUS\t0x%02x -> 0x%02x", message.src, message.dst);
             ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_DEBUG);
 
             switch(message.dst) {
@@ -77,19 +79,26 @@ static void cdc_emulator() {
     *                 0x68 -> 0x18   0x01
     */ 
     static const char *cdc_emu_tag = "CDC_EMU";
-    char *cdc_msg = (char*) malloc(6);
-    
-    ESP_LOGD(cdc_emu_tag, "Sending CD Changer Startup Message: %s", cdc_msg);
+
     //* CD Changer Messages from http://web.archive.org/web/20110320053244/http://ibus.stuge.se/CD_Changer
-    encode_kbus_message(CDC, LOC, (uint8_t[]){DEV_STAT_RDY, 0x01}, 2, cdc_msg); // Encode "Device status Ready After Reset"
-    kbus_send_bytes(cdc_emu_tag, cdc_msg, 6);                                   // Send "After Reset" message on boot
-    encode_kbus_message(CDC, LOC, (uint8_t[]){DEV_STAT_RDY, 0x00}, 2, cdc_msg); // Encode "Device status Ready"
+    kbus_message_t cdc_msg = { // Encode "Device status Ready After Reset"
+        .src = CDC,
+        .dst = LOC,
+        .body = {DEV_STAT_RDY, 0x01},
+        .body_len = 2,
+        .msg_len = 4,
+        .chksum = 0x00
+    };
+    
+    ESP_LOGD(cdc_emu_tag, "Queueing CD Changer Startup Message");
+    xQueueSend(kbus_tx_queue, &cdc_msg, 10);
+
+    cdc_msg.body[1] = 0x00; // Encode "Device status Ready"
     vTaskDelay(SECONDS(20));
 
     while(1) {
-        ESP_LOGD(cdc_emu_tag, "Sending CD Changer Reply Message: %s", cdc_msg);
-        ESP_LOG_BUFFER_HEXDUMP(cdc_emu_tag, cdc_msg, 6, ESP_LOG_DEBUG);
-        kbus_send_bytes(cdc_emu_tag, cdc_msg, 6); // Send "Device status Ready" every 20 seconds
+        ESP_LOGD(cdc_emu_tag, "Queueing CD Changer Reply Message");
+        xQueueSend(kbus_tx_queue, &cdc_msg, 10);
         vTaskDelay(SECONDS(20));
     }
 }
@@ -128,28 +137,39 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
 
             switch(mfl_cmd[1]) {
                 //* A button down event received, let's store it.
-
                 case 0x01: // "search up pressed"
                 case 0x02: // "R/T pressed"
                 case 0x08: { // "search down pressed"
                     ESP_LOGD(TAG, "MFL Up or Down short press");
                     last_mfl_cmd[0] = mfl_cmd[0];
                     last_mfl_cmd[1] = mfl_cmd[1];
-                    return; // Return, don't need to take any further action other than storing opeing event.
+                    return; // Return, don't need to take any further action other than storing opening event.
                 }
+
+                //* A long press event
                 case 0x12: // "R/T pressed long"
+                    ESP_LOGD(TAG, "MFL R/T long press");
+                    if(last_mfl_cmd[1] == mfl_cmd[1]){
+                        return; // Return, this is a repeat long press event.
+                    }
                     last_mfl_cmd[0] = mfl_cmd[0];
                     last_mfl_cmd[1] = mfl_cmd[1];
                     bt_command = AVRCP_PLAY;
                     break;
                 case 0x11: // "search up pressed long"
                     ESP_LOGD(TAG, "MFL Up long press");
+                    if(last_mfl_cmd[1] == mfl_cmd[1]){
+                        return; // Return, this is a repeat long press event.
+                    }
                     last_mfl_cmd[0] = mfl_cmd[0];
                     last_mfl_cmd[1] = mfl_cmd[1];
                     bt_command = AVRCP_FF_START;
                     break;
                 case 0x18: // "search down pressed long"
                     ESP_LOGD(TAG, "MFL Down long press");
+                    if(last_mfl_cmd[1] == mfl_cmd[1]){
+                        return; // Return, this is a repeat long press event.
+                    }
                     last_mfl_cmd[0] = mfl_cmd[0];
                     last_mfl_cmd[1] = mfl_cmd[1];
                     bt_command = AVRCP_RWD_START;
@@ -211,31 +231,4 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
 void begin_cdc_emulator() {
     ESP_LOGI(TAG, "Creating CD Changer Emulator");
     xTaskCreatePinnedToCore(cdc_emulator, "cdc_emu", 4096, NULL, CDC_EMU_PRIORITY, NULL, 1);
-}
-
-static void encode_kbus_message(uint8_t src, uint8_t dst, uint8_t data[], uint8_t data_len, char* encoded_msg) {
- 
-    uint8_t msg_len = data_len + 2; //Base message length + destination & checksum bytes.
-
-    uint8_t checksum = 0x00;
-    checksum ^= src ^ dst ^ msg_len;
-
-    for(uint8_t i = 0; i < data_len; i++) {
-        checksum ^= data[i];
-    }
-
-    encoded_msg[0] = (char) src;
-    encoded_msg[1] = (char) msg_len;
-    encoded_msg[2] = (char) dst;
-    encoded_msg[3+data_len] = (char) checksum;
-
-    for(uint8_t i = 0; i < data_len; i++) {
-        encoded_msg[3+i] = (char) data[i];
-    }
-
-    ESP_LOGD(TAG, "%02x %02x %02x %02x %02x %02x", src, msg_len, dst, data[0], data[1], checksum);
-}
-
-void decode_kbus_message(uint8_t* data, uint8_t msg_length, uint8_t checksum) {
-
 }

@@ -17,18 +17,5 @@ typedef struct {
  * @note aborts if any of the uart calls fails.
  * 
  */
-void init_kbus_uart_driver(QueueHandle_t kbus_queue);
-
-// TODO: Refactor kbus sending w/queue instead of a call
-/**
- * @brief Writes `numBytes` bytes to kbus UART.
- * 
- * @param logName
- * @param bytes
- * @param numBytes
- * 
- * @returns Number of bytes transmitted
- * 
- */
-int kbus_send_bytes(const char* logName, const char* bytes, uint8_t numBytes);
+void init_kbus_uart_driver(QueueHandle_t rx_queue, QueueHandle_t tx_queue);
 #endif //KBUS_UART_DRIVER_H

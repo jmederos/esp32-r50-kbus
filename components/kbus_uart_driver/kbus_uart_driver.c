@@ -1,10 +1,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
 #include "esp_system.h"
 #include "esp_log.h"
 #include "driver/uart.h"
-#include "string.h"
 #include "driver/gpio.h"
+
+#include "string.h"
 
 #include "kbus_uart_driver.h"
 
@@ -13,21 +15,26 @@
 #define SERVICE_UART UART_NUM_2
 #define LED_PIN (GPIO_NUM_2)
 
-#define HERTZ(hz) ((1000/hz) / portTICK_RATE_MS)
+#define RX_TASK_PRIORITY configMAX_PRIORITIES-1
+#define TX_TASK_PRIORITY RX_TASK_PRIORITY-3
 
-//TODO: Add to kconfig
-#define KBUS_TX_TEST_IS_ENABLED flase
-
-static const int RX_BUF_SIZE = 1024;
-static const int TX_BUF_SIZE = 512;
+static const int RX_BUF_SIZE = 2048;
+static const int TX_BUF_SIZE = 1024;
 static const char* TAG = "kbus_driver";
 
 static QueueHandle_t kbus_rx_queue;
+static QueueHandle_t kbus_tx_queue;
 static QueueHandle_t uart_rx_queue;
 
 static void rx_task();
+static void tx_task();
+static uint8_t calc_checksum();
 
-void init_kbus_uart_driver(QueueHandle_t kbus_queue) {
+void init_kbus_uart_driver(QueueHandle_t rx_queue, QueueHandle_t tx_queue) {
+    // Store kbus message queues
+    kbus_rx_queue = rx_queue;
+    kbus_tx_queue = tx_queue;
+
     //* Configuring based on i/k bus spec:
     //* http://web.archive.org/web/20070513012128/http://www.openbmw.org/bus/
     ESP_LOGI(TAG, "Initializing Kbus UART");
@@ -50,17 +57,16 @@ void init_kbus_uart_driver(QueueHandle_t kbus_queue) {
     ESP_ERROR_CHECK(uart_set_mode(SERVICE_UART, UART_MODE_UART));
 
     ESP_LOGI(TAG, "Creating kbus_uart_driver rx task");
-    xTaskCreatePinnedToCore(rx_task, "uart_rx_task", RX_BUF_SIZE*4, NULL, configMAX_PRIORITIES-1, NULL, 1);
+    xTaskCreatePinnedToCore(rx_task, "uart_rx_task", RX_BUF_SIZE*4, NULL, RX_TASK_PRIORITY, NULL, 1);
+    ESP_LOGI(TAG, "Creating kbus_uart_driver tx task");
+    xTaskCreatePinnedToCore(tx_task, "uart_tx_task", TX_BUF_SIZE*4, NULL, TX_TASK_PRIORITY, NULL, 1);
 
     // Setup onboard LED
     gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(LED_PIN, 0);
-
-    // Store kbus message queue
-    kbus_rx_queue = kbus_queue;
 }
 
-int kbus_send_bytes(const char* logName, const char* bytes, uint8_t numBytes) {
+static int kbus_send_bytes(const char* logName, const char* bytes, uint8_t numBytes) {
     ESP_LOGV(logName, "Writing %02x bytes to kbus", numBytes);
     const int txBytes = uart_write_bytes(SERVICE_UART, bytes, numBytes);
     ESP_LOGD(logName, "Wrote %02x bytes to kbus", txBytes);
@@ -71,7 +77,7 @@ int kbus_send_bytes(const char* logName, const char* bytes, uint8_t numBytes) {
  * @brief Task that handles incoming kbus data
  */
 static void rx_task() {
-    static const char *RX_TASK_TAG = "RX_TASK";
+    static const char *RX_TASK_TAG = "uart_rx_task";
 
     uart_event_t event;
     kbus_message_t rx_message;
@@ -87,8 +93,9 @@ static void rx_task() {
                 case UART_DATA:
                     gpio_set_level(LED_PIN, 1); // Turn on module LED
 
-                    uart_read_bytes(SERVICE_UART, msg_header, 2, 0);           // Read header: src_addr + msg_len
+                    uart_read_bytes(SERVICE_UART, msg_header, 2, 0);            // Read header: src_addr + msg_len
                     uart_read_bytes(SERVICE_UART, msg_buf, msg_header[1], 0);   // Only read the bytes the message says to read
+                    ESP_LOGD(RX_TASK_TAG, "Read %d bytes from UART", event.size);
 
                     rx_message.src = msg_header[0];
                     rx_message.msg_len = msg_header[1];
@@ -96,15 +103,18 @@ static void rx_task() {
                     rx_message.dst = msg_buf[0];                                // Copy message dst address to struct
                     memcpy(rx_message.body, msg_buf + 1, msg_header[1] - 1);    // Copy message body to struct using byte offsets
                     rx_message.chksum = msg_buf[msg_header[1] - 1];             // Copy message checksum to struct
-// TODO: Checksum verification here instead of in next layer up. That way only valid messages are put on the queue
-                    ESP_LOGD(RX_TASK_TAG, "Read %d bytes from UART", event.size);
-                    ESP_LOGD(RX_TASK_TAG, "KBUS\t0x%02x----->0x%02x\tLength: %d\tCHK:0x%02x", rx_message.src, rx_message.dst, rx_message.body_len+2, rx_message.chksum);
-                    ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, rx_message.body, event.size-4, ESP_LOG_DEBUG);
 
-                    xQueueSend(kbus_rx_queue, &rx_message, 1600);
+                    if(rx_message.chksum == calc_checksum(&rx_message)){
+                        ESP_LOGD(RX_TASK_TAG, "KBUS\t0x%02x --> 0x%02x\tLength: %d\tCHK:0x%02x", rx_message.src, rx_message.dst, rx_message.body_len+2, rx_message.chksum);
+                        xQueueSend(kbus_rx_queue, &rx_message, 1600);
+                    } else {
+                        ESP_LOGW(RX_TASK_TAG, "Invalid message received!");
+                    }
+                    ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, rx_message.body, event.size-4, ESP_LOG_DEBUG);
 
                     gpio_set_level(LED_PIN, 0);
                     break;
+
                 case UART_PARITY_ERR:
                 case UART_FRAME_ERR:
                 case UART_FIFO_OVF:
@@ -120,4 +130,53 @@ static void rx_task() {
     }
     free(msg_buf);
     msg_buf=NULL;
+}
+
+static void tx_task() {
+    static const char *TX_TASK_TAG = "uart_tx_task";
+
+    kbus_message_t tx_message;
+    char* tx_buf = (char*) malloc(257);
+    int bytes_sent = 0;
+    uint8_t total_tx_bytes = 0;
+    
+    while(1) {
+        bytes_sent = 0;
+        total_tx_bytes = 0;
+        bzero(tx_buf, 257);
+
+        if(xQueueReceive(kbus_tx_queue, (void * )&tx_message, (portTickType)portMAX_DELAY)) {
+            ESP_LOGD(TX_TASK_TAG, "tx_message: 0x%02x --> 0x%02x", tx_message.src, tx_message.dst);
+            ESP_LOG_BUFFER_HEXDUMP(TX_TASK_TAG, tx_message.body, tx_message.body_len, ESP_LOG_VERBOSE);
+
+            tx_message.chksum = calc_checksum(&tx_message); // Just assume messages on queue don't have a checksum
+            total_tx_bytes = tx_message.msg_len + 2;
+
+            tx_buf[0] = (char) tx_message.src;
+            tx_buf[1] = (char) tx_message.msg_len;
+            tx_buf[2] = (char) tx_message.dst;
+            tx_buf[3 + tx_message.body_len] = (char) tx_message.chksum;
+
+            memcpy(&tx_buf[3], tx_message.body, tx_message.body_len);
+            ESP_LOG_BUFFER_HEXDUMP(TX_TASK_TAG, tx_buf, total_tx_bytes, ESP_LOG_DEBUG);
+
+            bytes_sent = kbus_send_bytes(TX_TASK_TAG, tx_buf, total_tx_bytes);
+
+            if(total_tx_bytes == bytes_sent){
+                ESP_LOGD(TX_TASK_TAG, "Successfully sent %d/%d bytes", bytes_sent, total_tx_bytes);
+            } else {
+                ESP_LOGW(TX_TASK_TAG, "Only sent %d/%d bytes!", bytes_sent, total_tx_bytes);
+            }
+        }
+    }
+}
+
+static uint8_t calc_checksum(kbus_message_t* message) {
+    uint8_t checksum = 0x00;
+    checksum ^= message->src ^ message->dst ^ message->msg_len;
+
+    for(uint8_t i = 0; i < message->body_len; i++) {
+        checksum ^= message->body[i];
+    }
+    return checksum;
 }
