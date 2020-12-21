@@ -81,11 +81,13 @@ static void rx_task() {
 
     uart_event_t event;
     kbus_message_t rx_message;
+    uint8_t rx_checksum = 0;
     uint8_t msg_header[2] = {0,0};
     uint8_t* msg_buf = (uint8_t*) malloc(257); // Size of max possible kbus message
     
     while(1) {
         if(xQueueReceive(uart_rx_queue, (void * )&event, (portTickType)portMAX_DELAY)) {
+            rx_checksum = 0;
             bzero(msg_buf, 257);
             bzero(rx_message.body, sizeof(rx_message.body));
 
@@ -98,14 +100,13 @@ static void rx_task() {
                     ESP_LOGD(RX_TASK_TAG, "Read %d bytes from UART", event.size);
 
                     rx_message.src = msg_header[0];
-                    rx_message.msg_len = msg_header[1];
                     rx_message.body_len = msg_header[1] - 2;                    // Body length for later iterating
                     rx_message.dst = msg_buf[0];                                // Copy message dst address to struct
                     memcpy(rx_message.body, msg_buf + 1, msg_header[1] - 1);    // Copy message body to struct using byte offsets
-                    rx_message.chksum = msg_buf[msg_header[1] - 1];             // Copy message checksum to struct
+                    rx_checksum = msg_buf[msg_header[1] - 1];             // Copy message checksum to struct
 
-                    if(rx_message.chksum == calc_checksum(&rx_message)){
-                        ESP_LOGD(RX_TASK_TAG, "KBUS\t0x%02x --> 0x%02x\tLength: %d\tCHK:0x%02x", rx_message.src, rx_message.dst, rx_message.body_len+2, rx_message.chksum);
+                    if(rx_checksum == calc_checksum(&rx_message)){
+                        ESP_LOGD(RX_TASK_TAG, "KBUS\t0x%02x --> 0x%02x\tLength: %d\tCHK:0x%02x", rx_message.src, rx_message.dst, rx_message.body_len+2, rx_checksum);
                         xQueueSend(kbus_rx_queue, &rx_message, 1600);
                     } else {
                         ESP_LOGW(RX_TASK_TAG, "Invalid message received!");
@@ -138,10 +139,12 @@ static void tx_task() {
     kbus_message_t tx_message;
     char* tx_buf = (char*) malloc(257);
     int bytes_sent = 0;
+    uint8_t msg_len = 0;
     uint8_t total_tx_bytes = 0;
     
     while(1) {
         bytes_sent = 0;
+        msg_len = 0;
         total_tx_bytes = 0;
         bzero(tx_buf, 257);
 
@@ -149,18 +152,18 @@ static void tx_task() {
             ESP_LOGD(TX_TASK_TAG, "tx_message: 0x%02x --> 0x%02x", tx_message.src, tx_message.dst);
             ESP_LOG_BUFFER_HEXDUMP(TX_TASK_TAG, tx_message.body, tx_message.body_len, ESP_LOG_VERBOSE);
 
-            tx_message.chksum = calc_checksum(&tx_message); // Just assume messages on queue don't have a checksum
-            total_tx_bytes = tx_message.msg_len + 2;
+            msg_len = tx_message.body_len + 2;  // Derive message length from body length
+            total_tx_bytes = msg_len + 2;       // Total bytes to be put on the wire
 
             tx_buf[0] = (char) tx_message.src;
-            tx_buf[1] = (char) tx_message.msg_len;
+            tx_buf[1] = (char) msg_len;
             tx_buf[2] = (char) tx_message.dst;
-            tx_buf[3 + tx_message.body_len] = (char) tx_message.chksum;
+            tx_buf[3 + tx_message.body_len] = (char) calc_checksum(&tx_message);    // Calculate message checksum
 
-            memcpy(&tx_buf[3], tx_message.body, tx_message.body_len);
+            memcpy(&tx_buf[3], tx_message.body, tx_message.body_len);               // Copy message body to buffer
             ESP_LOG_BUFFER_HEXDUMP(TX_TASK_TAG, tx_buf, total_tx_bytes, ESP_LOG_DEBUG);
 
-            bytes_sent = kbus_send_bytes(TX_TASK_TAG, tx_buf, total_tx_bytes);
+            bytes_sent = kbus_send_bytes(TX_TASK_TAG, tx_buf, total_tx_bytes);      // Put bytes on the wire
 
             if(total_tx_bytes == bytes_sent){
                 ESP_LOGD(TX_TASK_TAG, "Successfully sent %d/%d bytes", bytes_sent, total_tx_bytes);
@@ -173,7 +176,7 @@ static void tx_task() {
 
 static uint8_t calc_checksum(kbus_message_t* message) {
     uint8_t checksum = 0x00;
-    checksum ^= message->src ^ message->dst ^ message->msg_len;
+    checksum ^= message->src ^ message->dst ^ (message->body_len + 2);
 
     for(uint8_t i = 0; i < message->body_len; i++) {
         checksum ^= message->body[i];

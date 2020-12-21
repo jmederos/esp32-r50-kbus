@@ -3,12 +3,9 @@
 
 typedef struct {
     uint8_t body[253];
-
-    uint8_t src;
     uint8_t body_len;
-    uint8_t msg_len;
+    uint8_t src;
     uint8_t dst;
-    uint8_t chksum;
 }kbus_message_t; 
 
 /**

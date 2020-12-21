@@ -20,7 +20,9 @@ static QueueHandle_t bt_cmd_queue;
 static QueueHandle_t kbus_rx_queue;
 static QueueHandle_t kbus_tx_queue;
 
+static void send_dev_ready_startup();
 static void kbus_rx_task();
+static void cdc_emulator(kbus_message_t rx_msg);
 static void mfl_handler(uint8_t mfl_cmd[2]);
 
 void init_kbus_service(QueueHandle_t bluetooth_queue) {
@@ -31,6 +33,23 @@ void init_kbus_service(QueueHandle_t bluetooth_queue) {
     int tsk_ret = xTaskCreatePinnedToCore(kbus_rx_task, "kbus_rx_tsk", 4096, NULL, KBUS_TASK_PRIORITY, NULL, 1);
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "kbus_rx_task creation failed with: %d", tsk_ret);}
     init_kbus_uart_driver(kbus_rx_queue, kbus_tx_queue);
+
+    send_dev_ready_startup();
+}
+
+static void send_dev_ready_startup() {
+    //* CDC -> LOC "Device status Ready After Reset"
+    kbus_message_t startup_msg = {
+        .src = CDC,
+        .dst = LOC,
+        .body = {DEV_STAT_RDY, 0x01},
+        .body_len = 2
+    };
+
+    ESP_LOGD(TAG, "Queueing CD Changer Startup Message");
+    xQueueSend(kbus_tx_queue, &startup_msg, 10);
+
+    // other emulated device startup messages here...
 }
 
 static void kbus_rx_task() {
@@ -45,11 +64,12 @@ static void kbus_rx_task() {
                 case LOC:
                     ESP_LOGW(TAG, "Broadcast Message Received!");
                     ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_WARN);
+                    cdc_emulator(message);
                     break;
                 case CDC:
                     ESP_LOGI(TAG, "Message for CD Changer Received");
                     ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_INFO);
-                    //TODO: cdc_emulator() here
+                    cdc_emulator(message);
                     break;
                 default:
                     break;
@@ -57,49 +77,49 @@ static void kbus_rx_task() {
 
             switch(message.src) {
                 case IKE:
-                    ESP_LOGI(TAG, "IKE -> 0x%02x Message Received", message.dst);
+                    ESP_LOGV(TAG, "IKE -> 0x%02x Message Received", message.dst);
                     break;
                 case RAD:
-                    ESP_LOGI(TAG, "Radio -> 0x%02x Message Received", message.dst);
+                    ESP_LOGV(TAG, "Radio -> 0x%02x Message Received", message.dst);
                     break;
                 case MFL:
                     ESP_LOGI(TAG, "MFL -> 0x%02x Message Received", message.dst);
                     mfl_handler((uint8_t[2]){message.body[0], message.body[1]});
                     break;
                 default:
-                    ESP_LOGI(TAG, "Message Received from 0x%02x", message.src);
+                    ESP_LOGV(TAG, "Message Received from 0x%02x", message.src);
+                    break;
             }
         }
     }
 }
 
-static void cdc_emulator() {
-    /**
-    * TODO: Listen for RAD -> CDC   "Device status request"
-    *                 0x68 -> 0x18   0x01
-    */ 
-    static const char *cdc_emu_tag = "CDC_EMU";
-
+static void cdc_emulator(kbus_message_t rx_msg) {
     //* CD Changer Messages from http://web.archive.org/web/20110320053244/http://ibus.stuge.se/CD_Changer
-    kbus_message_t cdc_msg = { // Encode "Device status Ready After Reset"
+    kbus_message_t cdc_tx = {   // CDC -> RAD "Device Status Request" response "Device Status Ready"
         .src = CDC,
-        .dst = LOC,
-        .body = {DEV_STAT_RDY, 0x01},
-        .body_len = 2,
-        .msg_len = 4,
-        .chksum = 0x00
+        .dst = rx_msg.src,      // Address to sender of received msg
+        .body_len = 0           // Dunno how long reply is going to be
     };
-    
-    ESP_LOGD(cdc_emu_tag, "Queueing CD Changer Startup Message");
-    xQueueSend(kbus_tx_queue, &cdc_msg, 10);
 
-    cdc_msg.body[1] = 0x00; // Encode "Device status Ready"
-    vTaskDelay(SECONDS(20));
+    switch(rx_msg.body[0]) {
+        case DEV_STAT_REQ:
+            ESP_LOGD(TAG, "CDC Received: DEVICE STATUS REQUEST");
+            cdc_tx.body[0] = DEV_STAT_RDY;
+            cdc_tx.body_len = 1;
+            xQueueSend(kbus_tx_queue, &cdc_tx, 10);
+            ESP_LOGD(TAG, "CDC Queued: DEVICE STATUS READY");
+            break;
 
-    while(1) {
-        ESP_LOGD(cdc_emu_tag, "Queueing CD Changer Reply Message");
-        xQueueSend(kbus_tx_queue, &cdc_msg, 10);
-        vTaskDelay(SECONDS(20));
+        case CD_CTRL_REQ:
+            ESP_LOGD(TAG, "CDC Received: CD CONTROL REQUEST");
+            cdc_tx.body[0] = CD_STAT_RPLY;
+            // TODO: Implement
+            break;
+
+        default:
+            ESP_LOGD(TAG, "CDC Received Other Command:");
+            ESP_LOG_BUFFER_HEXDUMP(TAG, rx_msg.body, rx_msg.body_len, ESP_LOG_DEBUG);
     }
 }
 
@@ -226,9 +246,4 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
         ESP_LOGI(TAG, "Sending BT Command 0x%02x", bt_command);
         xQueueSend(bt_cmd_queue, &bt_command, 100);
     }
-}
-
-void begin_cdc_emulator() {
-    ESP_LOGI(TAG, "Creating CD Changer Emulator");
-    xTaskCreatePinnedToCore(cdc_emulator, "cdc_emu", 4096, NULL, CDC_EMU_PRIORITY, NULL, 1);
 }

@@ -97,9 +97,6 @@ int app_main(void){
 
     // Setup kbus service; has side-effect of initializing and starting UART driver.
     init_kbus_service(bt_cmd_queue);
-    
-    // Start CD Changer emulator, naive approach for the time being. Sends `DEVICE STATUS READY` every 20 secs.
-    // begin_cdc_emulator(); // TODO: Implementation that responds to radio status messages like actual CDC.
 
 #ifdef R50_WIFI_ENABLED // Gating wifi and bt since there's still issues with them running concurrently.
     create_server_task();
