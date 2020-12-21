@@ -43,7 +43,6 @@ static uint8_t  avrcp_subevent_value[100];
 /* Setup AVRCP service */
 static void avrcp_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
 static void avrcp_controller_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
-static void avrcp_volume_changed(uint8_t volume);
 
 
 int avrcp_setup(char* announce_str, char* cxn_address){
@@ -58,7 +57,7 @@ int avrcp_setup(char* announce_str, char* cxn_address){
 
     // Create AVRCP Controller service record and register it with SDP
     memset(sdp_avrcp_controller_service_buffer, 0, sizeof(sdp_avrcp_controller_service_buffer));
-    uint16_t controller_supported_features = AVRCP_FEATURE_MASK_CATEGORY_PLAYER_OR_RECORDER;
+    uint16_t controller_supported_features = AVRCP_FEATURE_MASK_CATEGORY_MONITOR_OR_AMPLIFIER;
 
 #ifdef AVRCP_BROWSING_ENABLED
     controller_supported_features |= AVRCP_FEATURE_MASK_BROWSING;
@@ -124,6 +123,10 @@ uint8_t avrcp_ctl_end_long_press() {
     return avrcp_controller_release_press_and_hold_cmd(avrcp_cid);
 }
 
+uint8_t avrcp_get_now_playing() {
+    return avrcp_controller_get_now_playing_info(avrcp_cid);
+}
+
 static void avrcp_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size){
     UNUSED(channel);
     UNUSED(size);
@@ -138,7 +141,7 @@ static void avrcp_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
             local_cid = avrcp_subevent_connection_established_get_avrcp_cid(packet);
             status = avrcp_subevent_connection_established_get_status(packet);
             if (status != ERROR_CODE_SUCCESS){
-                ESP_LOGW(TAG, "AVRCP: Connection failed: status 0x%02x\n", status);
+                ESP_LOGW(TAG, "AVRCP: Connection failed: status 0x%02x", status);
                 avrcp_cid = 0;
                 return;
             }
@@ -146,7 +149,7 @@ static void avrcp_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
             avrcp_cid = local_cid;
             avrcp_connected = 1;
             avrcp_subevent_connection_established_get_bd_addr(packet, adress);
-            ESP_LOGI(TAG, "AVRCP: Connected to %s, cid 0x%02x\n", bd_addr_to_str(adress), avrcp_cid);
+            ESP_LOGI(TAG, "AVRCP: Connected to %s, cid 0x%02x", bd_addr_to_str(adress), avrcp_cid);
 
             // automatically enable notifications
             avrcp_controller_enable_notification(avrcp_cid, AVRCP_NOTIFICATION_EVENT_PLAYBACK_STATUS_CHANGED);
@@ -156,7 +159,7 @@ static void avrcp_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
         }
         
         case AVRCP_SUBEVENT_CONNECTION_RELEASED:
-            ESP_LOGI(TAG, "AVRCP: Channel released: cid 0x%02x\n", avrcp_subevent_connection_released_get_avrcp_cid(packet));
+            ESP_LOGI(TAG, "AVRCP: Channel released: cid 0x%02x", avrcp_subevent_connection_released_get_avrcp_cid(packet));
             avrcp_cid = 0;
             avrcp_connected = 0;
             return;
@@ -182,7 +185,7 @@ static void avrcp_controller_packet_handler(uint8_t packet_type, uint16_t channe
             case AVRCP_SUBEVENT_NOTIFICATION_PLAYBACK_POS_CHANGED:{
                 uint32_t playback_position_ms = avrcp_subevent_notification_playback_pos_changed_get_playback_position_ms(packet);
                 if (playback_position_ms == AVRCP_NO_TRACK_SELECTED_PLAYBACK_POSITION_CHANGED){
-                    ESP_LOGD(TAG, "AVRCP Controller: playback position changed, no track is selected\n");
+                    ESP_LOGD(TAG, "AVRCP Controller: playback position changed, no track is selected");
                 }  
                 break;
             }
@@ -195,98 +198,100 @@ static void avrcp_controller_packet_handler(uint8_t packet_type, uint16_t channe
     memset(avrcp_subevent_value, 0, sizeof(avrcp_subevent_value));
     switch (packet[2]){
         case AVRCP_SUBEVENT_NOTIFICATION_PLAYBACK_POS_CHANGED:
-            ESP_LOGD(TAG, "AVRCP Controller: Playback position changed, position %d ms\n", (unsigned int) avrcp_subevent_notification_playback_pos_changed_get_playback_position_ms(packet));
+            ESP_LOGD(TAG, "AVRCP Controller: Playback position changed, position %d ms", (unsigned int) avrcp_subevent_notification_playback_pos_changed_get_playback_position_ms(packet));
             break;
         case AVRCP_SUBEVENT_NOTIFICATION_PLAYBACK_STATUS_CHANGED:
-            ESP_LOGD(TAG, "AVRCP Controller: Playback status changed %s\n", avrcp_play_status2str(avrcp_subevent_notification_playback_status_changed_get_play_status(packet)));
+            ESP_LOGD(TAG, "AVRCP Controller: Playback status changed %s", avrcp_play_status2str(avrcp_subevent_notification_playback_status_changed_get_play_status(packet)));
             return;
         case AVRCP_SUBEVENT_NOTIFICATION_NOW_PLAYING_CONTENT_CHANGED:
-            ESP_LOGD(TAG, "AVRCP Controller: Playing content changed\n");
+            ESP_LOGD(TAG, "AVRCP Controller: Playing content changed");
+            avrcp_controller_get_now_playing_info(avrcp_cid);
             return;
         case AVRCP_SUBEVENT_NOTIFICATION_TRACK_CHANGED:
-            ESP_LOGD(TAG, "AVRCP Controller: Track changed\n");
+            ESP_LOG_BUFFER_HEXDUMP(TAG, packet, 16, ESP_LOG_DEBUG);
+            ESP_LOGD(TAG, "AVRCP Controller: Track changed");
+            uint8_t got_cid = avrcp_subevent_notification_track_changed_get_avrcp_cid(packet);
+            uint8_t got_cmd_type = avrcp_subevent_notification_track_changed_get_command_type(packet);
+            ESP_LOGI(TAG, "%02x %02x", got_cid, got_cmd_type);
             return;
         case AVRCP_SUBEVENT_NOTIFICATION_VOLUME_CHANGED:
-            ESP_LOGD(TAG, "AVRCP Controller: Absolute volume changed %d\n", avrcp_subevent_notification_volume_changed_get_absolute_volume(packet));
+            ESP_LOGD(TAG, "AVRCP Controller: Absolute volume changed %d", avrcp_subevent_notification_volume_changed_get_absolute_volume(packet));
             return;
         case AVRCP_SUBEVENT_NOTIFICATION_AVAILABLE_PLAYERS_CHANGED:
-            ESP_LOGD(TAG, "AVRCP Controller: Changed\n");
+            ESP_LOGD(TAG, "AVRCP Controller: Changed");
             return; 
         case AVRCP_SUBEVENT_SHUFFLE_AND_REPEAT_MODE:{
             uint8_t shuffle_mode = avrcp_subevent_shuffle_and_repeat_mode_get_shuffle_mode(packet);
             uint8_t repeat_mode  = avrcp_subevent_shuffle_and_repeat_mode_get_repeat_mode(packet);
-            ESP_LOGD(TAG, "AVRCP Controller: %s, %s\n", avrcp_shuffle2str(shuffle_mode), avrcp_repeat2str(repeat_mode));
+            ESP_LOGD(TAG, "AVRCP Controller: %s, %s", avrcp_shuffle2str(shuffle_mode), avrcp_repeat2str(repeat_mode));
             break;
         }
         case AVRCP_SUBEVENT_NOW_PLAYING_TRACK_INFO:
-            ESP_LOGD(TAG, "AVRCP Controller:     Track: %d\n", avrcp_subevent_now_playing_track_info_get_track(packet));
-            break;
+            //// ESP_LOGD(TAG, "AVRCP Controller:     Track: %d", avrcp_subevent_now_playing_track_info_get_track(packet));
+            //// break;
 
         case AVRCP_SUBEVENT_NOW_PLAYING_TOTAL_TRACKS_INFO:
-            ESP_LOGD(TAG, "AVRCP Controller:     Total Tracks: %d\n", avrcp_subevent_now_playing_total_tracks_info_get_total_tracks(packet));
+            //// ESP_LOGD(TAG, "AVRCP Controller:     Total Tracks: %d", avrcp_subevent_now_playing_total_tracks_info_get_total_tracks(packet));
             break;
 
         case AVRCP_SUBEVENT_NOW_PLAYING_TITLE_INFO:
             if (avrcp_subevent_now_playing_title_info_get_value_len(packet) > 0){
                 memcpy(avrcp_subevent_value, avrcp_subevent_now_playing_title_info_get_value(packet), avrcp_subevent_now_playing_title_info_get_value_len(packet));
-                ESP_LOGD(TAG, "AVRCP Controller:     Title: %s\n", avrcp_subevent_value);
+                ESP_LOGD(TAG, "AVRCP Controller:     Title: %s", avrcp_subevent_value);
             }  
             break;
 
         case AVRCP_SUBEVENT_NOW_PLAYING_ARTIST_INFO:
             if (avrcp_subevent_now_playing_artist_info_get_value_len(packet) > 0){
                 memcpy(avrcp_subevent_value, avrcp_subevent_now_playing_artist_info_get_value(packet), avrcp_subevent_now_playing_artist_info_get_value_len(packet));
-                ESP_LOGD(TAG, "AVRCP Controller:     Artist: %s\n", avrcp_subevent_value);
+                ESP_LOGD(TAG, "AVRCP Controller:     Artist: %s", avrcp_subevent_value);
             }  
             break;
         
         case AVRCP_SUBEVENT_NOW_PLAYING_ALBUM_INFO:
             if (avrcp_subevent_now_playing_album_info_get_value_len(packet) > 0){
                 memcpy(avrcp_subevent_value, avrcp_subevent_now_playing_album_info_get_value(packet), avrcp_subevent_now_playing_album_info_get_value_len(packet));
-                ESP_LOGD(TAG, "AVRCP Controller:     Album: %s\n", avrcp_subevent_value);
+                ESP_LOGD(TAG, "AVRCP Controller:     Album: %s", avrcp_subevent_value);
             }  
             break;
         
         case AVRCP_SUBEVENT_NOW_PLAYING_GENRE_INFO:
             if (avrcp_subevent_now_playing_genre_info_get_value_len(packet) > 0){
                 memcpy(avrcp_subevent_value, avrcp_subevent_now_playing_genre_info_get_value(packet), avrcp_subevent_now_playing_genre_info_get_value_len(packet));
-                ESP_LOGD(TAG, "AVRCP Controller:     Genre: %s\n", avrcp_subevent_value);
+                ESP_LOGD(TAG, "AVRCP Controller:     Genre: %s", avrcp_subevent_value);
             }  
             break;
         
         case AVRCP_SUBEVENT_PLAY_STATUS:
-            ESP_LOGD(TAG, "AVRCP Controller: Song length %"PRIu32" ms, Song position %"PRIu32" ms, Play status %s\n", 
+            ESP_LOGD(TAG, "AVRCP Controller: Song length %"PRIu32" ms, Song position %"PRIu32" ms, Play status %s", 
                 avrcp_subevent_play_status_get_song_length(packet), 
                 avrcp_subevent_play_status_get_song_position(packet),
                 avrcp_play_status2str(avrcp_subevent_play_status_get_play_status(packet)));
             break;
         
         case AVRCP_SUBEVENT_OPERATION_COMPLETE:
-            ESP_LOGD(TAG, "AVRCP Controller: %s complete\n", avrcp_operation2str(avrcp_subevent_operation_complete_get_operation_id(packet)));
+            ESP_LOGD(TAG, "AVRCP Controller: %s complete", avrcp_operation2str(avrcp_subevent_operation_complete_get_operation_id(packet)));
             break;
         
         case AVRCP_SUBEVENT_OPERATION_START:
-            ESP_LOGD(TAG, "AVRCP Controller: %s start\n", avrcp_operation2str(avrcp_subevent_operation_start_get_operation_id(packet)));
+            ESP_LOGD(TAG, "AVRCP Controller: %s start", avrcp_operation2str(avrcp_subevent_operation_start_get_operation_id(packet)));
             break;
        
+        case AVRCP_SUBEVENT_NOTIFICATION_EVENT_TRACK_REACHED_START:
+            ESP_LOGD(TAG, "AVRCP Controller: Track reached start");
+            break;
+
         case AVRCP_SUBEVENT_NOTIFICATION_EVENT_TRACK_REACHED_END:
-            ESP_LOGD(TAG, "AVRCP Controller: Track reached end\n");
+            ESP_LOGD(TAG, "AVRCP Controller: Track reached end");
             break;
 
         case AVRCP_SUBEVENT_PLAYER_APPLICATION_VALUE_RESPONSE:
-            ESP_LOGD(TAG, "A2DP  Sink      : Set Player App Value %s\n", avrcp_ctype2str(avrcp_subevent_player_application_value_response_get_command_type(packet)));
+            ESP_LOGD(TAG, "A2DP  Sink      : Set Player App Value %s", avrcp_ctype2str(avrcp_subevent_player_application_value_response_get_command_type(packet)));
             break;
             
        
         default:
-            ESP_LOGD(TAG, "AVRCP Controller: Event 0x%02x is not parsed\n", packet[2]);
+            ESP_LOGD(TAG, "AVRCP Controller: Event 0x%02x is not parsed", packet[2]);
             break;
     }  
-}
-
-static void avrcp_volume_changed(uint8_t volume){
-    const btstack_audio_sink_t * audio = btstack_audio_sink_get_instance();
-    if (audio){
-        audio->set_volume(volume);
-    }
 }

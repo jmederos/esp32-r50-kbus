@@ -27,4 +27,6 @@ uint8_t avrcp_ctl_start_rwd();
 
 uint8_t avrcp_ctl_end_long_press();
 
+uint8_t avrcp_get_now_playing();
+
 #endif // AVRCP_CONTROL_H

@@ -13,7 +13,8 @@ typedef enum {
     AVRCP_RWD_START,
     AVRCP_RWD_STOP,
     AVRCP_NEXT,
-    AVRCP_PREV
+    AVRCP_PREV,
+    AVRCP_GET_INFO
 } bt_cmd_type_t;
 
 #endif

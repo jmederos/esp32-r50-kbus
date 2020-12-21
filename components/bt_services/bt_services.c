@@ -74,47 +74,75 @@ static void bt_cmd_task() {
             switch(command) {
                 case BT_CONNECT:
                     ESP_LOGD(TAG, "BT Attempting Connect");
-                    avrcp_ctl_connect();
+                    if(avrcp_ctl_connect() != ERROR_CODE_SUCCESS) {
+                        ESP_LOGE(TAG, "AVRCP Connection error");
+                    }
                     break;
                 case BT_DISCONNECT:
                     ESP_LOGD(TAG, "BT Attempting Disconnect");
-                    avrcp_ctl_disconnect();
+                    if(avrcp_ctl_disconnect() != ERROR_CODE_SUCCESS) {
+                        ESP_LOGE(TAG, "AVRCP Disconnect error");
+                    }
                     break;
                 case AVRCP_PLAY:
-                    avrcp_ctl_play();
                     ESP_LOGD(TAG, "BT Play Requested");
+                    if(avrcp_ctl_play()!= ERROR_CODE_SUCCESS) {
+                        ESP_LOGE(TAG, "AVRCP Play command error");
+                    }
                     break;
                 case AVRCP_PAUSE:
                     ESP_LOGD(TAG, "BT Pause Requested");
-                    avrcp_ctl_pause();
+                    if(avrcp_ctl_pause() != ERROR_CODE_SUCCESS) {
+                        ESP_LOGE(TAG, "AVRCP Pause command error");
+                    }
                     break;
                 case AVRCP_STOP:
                     ESP_LOGD(TAG, "BT STOP Requested");
-                    avrcp_ctl_stop();
+                    if(avrcp_ctl_stop() != ERROR_CODE_SUCCESS) {
+                        ESP_LOGE(TAG, "AVRCP Stop command error");
+                    }
                     break;
                 case AVRCP_NEXT:
                     ESP_LOGD(TAG, "BT Next Requested");
-                    avrcp_ctl_next();
+                    if(avrcp_ctl_next() != ERROR_CODE_SUCCESS) {
+                        ESP_LOGE(TAG, "AVRCP Next command error");
+                    }
                     break;
                 case AVRCP_PREV:
                     ESP_LOGD(TAG, "BT Previous Requested");
-                    avrcp_ctl_prev();
+                    if(avrcp_ctl_prev() != ERROR_CODE_SUCCESS) {
+                        ESP_LOGE(TAG, "AVRCP Previous command error");
+                    }
                     break;
                 case AVRCP_FF_START:
                     ESP_LOGD(TAG, "BT Fast Forward Requested");
-                    avrcp_ctl_start_ff();
+                    if(avrcp_ctl_start_ff() != ERROR_CODE_SUCCESS) {
+                        ESP_LOGE(TAG, "AVRCP FF command error");
+                    }
                     break;
                 case AVRCP_FF_STOP:
                     ESP_LOGD(TAG, "BT Fast Forward Stop");
-                    avrcp_ctl_end_long_press();
+                    if(avrcp_ctl_end_long_press() != ERROR_CODE_SUCCESS) {
+                        ESP_LOGE(TAG, "AVRCP FF Stop command error");
+                    }
                     break;
                 case AVRCP_RWD_START:
                     ESP_LOGD(TAG, "BT Rewind Requested");
-                    avrcp_ctl_start_rwd();
+                    if(avrcp_ctl_start_rwd() != ERROR_CODE_SUCCESS) {
+                        ESP_LOGE(TAG, "AVRCP RWD command error");
+                    }
                     break;
                 case AVRCP_RWD_STOP:
                     ESP_LOGD(TAG, "BT Rewind Stop");
-                    avrcp_ctl_end_long_press();
+                    if(avrcp_ctl_end_long_press() != ERROR_CODE_SUCCESS) {
+                        ESP_LOGE(TAG, "AVRCP RWD command error");
+                    }
+                    break;
+                case AVRCP_GET_INFO:
+                ESP_LOGD(TAG, "AVRCP Requesting Track Info");
+                    if(avrcp_get_now_playing() != ERROR_CODE_SUCCESS) {
+                        ESP_LOGE(TAG, "AVRCP RWD command error");
+                    }
                     break;
                 default:
                     ESP_LOGD(TAG, "No action registered for command 0x%02x", command);

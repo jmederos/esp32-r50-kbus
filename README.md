@@ -23,7 +23,8 @@ K-bus/I-bus to Bluetooth bridge for Mini/BMWs. Based on ESP32.
 
 * [Sparkfun MicroMod ESP32](https://www.sparkfun.com/products/16781)
 * [Sparkfun MicroMod ATP Board](https://www.sparkfun.com/products/16885)
-* [On Semi NCV7805BTG 5V Regulator](https://www.digikey.com/en/products/detail/on-semiconductor/921437)
+* ~~[On Semi NCV7805BTG 5V Regulator](https://www.digikey.com/en/products/detail/on-semiconductor/921437)~~
+* [USB Power Supply](https://www.amazon.com/gp/product/B07KWRH61D)
 
 #### Candidate K-bus ICs
 
@@ -73,9 +74,10 @@ _Note: Helper scripts in tools folder assume a WSL Ubuntu install w/ESP32 on Win
 | Software POC: control phone via AVRCP w/o A2DP advertised. | 👌 | _Although part of the BT spec, example implementations on AVRCP-only are hard to come by._ |
 | Hardware POC: acquire + test k-line transceivers. | 🙌 |   |
 | K-bus proof concept, pickup MFL messages. | 👍 | _Have yet to test in vehicle, works in mockup w/Navcoder + iPhone streaming to a BT headphone amp._ |
+| [AMS](https://developer.apple.com/library/archive/documentation/CoreBluetooth/Reference/AppleMediaService_Reference/Specification/Specification.html) instead of AVRCP |   | _Didn't know this was a thing, seems like a better bet; btstack + esp-idf is a little clunky._ |
 | Write to radio head unit display |   |   |
-| ANCS Support & update radio display w/push notification | 🤞 |   |
-| i2s DAC for fully integrated solution?...| 🤔🤷🏽‍♂ | _unlikely_ |
+| [ANCS](https://developer.apple.com/library/archive/documentation/CoreBluetooth/Reference/AppleNotificationCenterServiceSpecification/Introduction/Introduction.html) Support & update radio display w/push notification | 🤞 |   |
+| ~~i2s DAC for fully integrated solution?...~~|  | _nah... AMS + existing FiiO DAC is better._ |
 
 _See the [open issues](https://github.com/jmederos/esp32-r50-kbus/issues) for a list of proposed features (and known issues)._
 
