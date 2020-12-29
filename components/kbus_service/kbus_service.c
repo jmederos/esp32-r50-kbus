@@ -20,11 +20,12 @@ static QueueHandle_t bt_cmd_queue;
 static QueueHandle_t kbus_rx_queue;
 static QueueHandle_t kbus_tx_queue;
 
-static void send_dev_ready_startup();
 static void kbus_rx_task();
 static void cdc_emulator(kbus_message_t rx_msg);
 static void tel_emulator(kbus_message_t rx_msg);
 static void mfl_handler(uint8_t mfl_cmd[2]);
+
+static inline void send_dev_ready(uint8_t source, uint8_t dest, bool startup);
 
 void init_kbus_service(QueueHandle_t bluetooth_queue) {
     bt_cmd_queue = bluetooth_queue;
@@ -35,22 +36,26 @@ void init_kbus_service(QueueHandle_t bluetooth_queue) {
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "kbus_rx_task creation failed with: %d", tsk_ret);}
     init_kbus_uart_driver(kbus_rx_queue, kbus_tx_queue);
 
-    send_dev_ready_startup();
+    // We're emulating CDC and TEL, send a device startup packet
+    send_dev_ready(CDC, LOC, true);
+    send_dev_ready(TEL, LOC, true);
 }
 
-static void send_dev_ready_startup() {
-    //* CDC -> LOC "Device status Ready After Reset"
-    kbus_message_t startup_msg = {
-        .src = CDC,
-        .dst = LOC,
-        .body = {DEV_STAT_RDY, 0x01},
+static inline void send_dev_ready(uint8_t source, uint8_t dest, bool startup) {
+    //* SOURCE -> DEST "Device status Ready"
+    kbus_message_t message = {
+        .src = source,
+        .dst = dest,
+        .body = {DEV_STAT_RDY, 0x00},
         .body_len = 2
     };
 
-    ESP_LOGD(TAG, "Queueing CD Changer Startup Message");
-    xQueueSend(kbus_tx_queue, &startup_msg, 10);
+    // If startup, update message to
+    //"Device Status Ready After Reset"
+    if(startup) { message.body[1] = 0x01; }
 
-    // other emulated device startup messages here...
+    ESP_LOGD(TAG, "Queueing 0x%02x Startup Message", source);
+    xQueueSend(kbus_tx_queue, &message, 10);
 }
 
 static void kbus_rx_task() {
@@ -107,10 +112,7 @@ static void cdc_emulator(kbus_message_t rx_msg) {
     switch(rx_msg.body[0]) {
         case DEV_STAT_REQ:
             ESP_LOGD(TAG, "CDC Received: DEVICE STATUS REQUEST");
-            cdc_tx.body[0] = DEV_STAT_RDY;
-            cdc_tx.body[1] = 0x00;
-            cdc_tx.body_len = 2;
-            xQueueSend(kbus_tx_queue, &cdc_tx, 10);
+            send_dev_ready(CDC, rx_msg.src, false);
             ESP_LOGD(TAG, "CDC Queued: DEVICE STATUS READY");
             break;
 
@@ -136,18 +138,10 @@ static void cdc_emulator(kbus_message_t rx_msg) {
 }
 
 static void tel_emulator(kbus_message_t rx_msg) {
-    kbus_message_t tel_tx = {   // TEL -> SOURCE "Device Status Request" response "Device Status Ready"
-        .src = TEL,
-        .dst = rx_msg.src,      // Address to sender of received msg
-    };
-
     switch(rx_msg.body[0]) {
         case DEV_STAT_REQ:
             ESP_LOGD(TAG, "TEL Received: DEVICE STATUS REQUEST");
-            tel_tx.body[0] = DEV_STAT_RDY;
-            tel_tx.body[1] = 0x00;
-            tel_tx.body_len = 2;
-            xQueueSend(kbus_tx_queue, &tel_tx, 10);
+            send_dev_ready(TEL, rx_msg.src, false);
             ESP_LOGD(TAG, "TEL Queued: DEVICE STATUS READY");
             break;
 
