@@ -23,6 +23,7 @@ static QueueHandle_t kbus_tx_queue;
 static void send_dev_ready_startup();
 static void kbus_rx_task();
 static void cdc_emulator(kbus_message_t rx_msg);
+static void tel_emulator(kbus_message_t rx_msg);
 static void mfl_handler(uint8_t mfl_cmd[2]);
 
 void init_kbus_service(QueueHandle_t bluetooth_queue) {
@@ -61,16 +62,18 @@ static void kbus_rx_task() {
             ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_DEBUG);
 
             switch(message.dst) {
-                case LOC:
-                    ESP_LOGW(TAG, "Broadcast Message Received!");
-                    ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_WARN);
-                    cdc_emulator(message);
-                    break;
                 case CDC:
-                    ESP_LOGI(TAG, "Message for CD Changer Received");
-                    ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_INFO);
+                    ESP_LOGD(TAG, "Message for CD Changer Received");
+                    ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_DEBUG);
                     cdc_emulator(message);
                     break;
+
+                case TEL:
+                    ESP_LOGD(TAG, "Message for TEL Changer Received");
+                    ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_DEBUG);
+                    tel_emulator(message);
+                    break;
+
                 default:
                     break;
             }
@@ -83,7 +86,7 @@ static void kbus_rx_task() {
                     ESP_LOGV(TAG, "Radio -> 0x%02x Message Received", message.dst);
                     break;
                 case MFL:
-                    ESP_LOGI(TAG, "MFL -> 0x%02x Message Received", message.dst);
+                    ESP_LOGD(TAG, "MFL -> 0x%02x Message Received", message.dst);
                     mfl_handler((uint8_t[2]){message.body[0], message.body[1]});
                     break;
                 default:
@@ -96,29 +99,60 @@ static void kbus_rx_task() {
 
 static void cdc_emulator(kbus_message_t rx_msg) {
     //* CD Changer Messages from http://web.archive.org/web/20110320053244/http://ibus.stuge.se/CD_Changer
-    kbus_message_t cdc_tx = {   // CDC -> RAD "Device Status Request" response "Device Status Ready"
+    kbus_message_t cdc_tx = {   // CDC -> SORUCE "Device Status Request" response "Device Status Ready"
         .src = CDC,
         .dst = rx_msg.src,      // Address to sender of received msg
-        .body_len = 0           // Dunno how long reply is going to be
     };
 
     switch(rx_msg.body[0]) {
         case DEV_STAT_REQ:
             ESP_LOGD(TAG, "CDC Received: DEVICE STATUS REQUEST");
             cdc_tx.body[0] = DEV_STAT_RDY;
-            cdc_tx.body_len = 1;
+            cdc_tx.body[1] = 0x00;
+            cdc_tx.body_len = 2;
             xQueueSend(kbus_tx_queue, &cdc_tx, 10);
             ESP_LOGD(TAG, "CDC Queued: DEVICE STATUS READY");
             break;
 
-        case CD_CTRL_REQ:
+        case CD_CTRL_REQ: // TODO: React to different requests and reply appropriately
             ESP_LOGD(TAG, "CDC Received: CD CONTROL REQUEST");
             cdc_tx.body[0] = CD_STAT_RPLY;
-            // TODO: Implement
+            cdc_tx.body[1] = 0x00;  // STOP
+            cdc_tx.body[2] = 0x00;  // PAUSE requested on 0x02
+            cdc_tx.body[3] = 0x00;  // ERRORS byte, can || multiple flags
+            cdc_tx.body[4] = 0x21;  // DISCS loaded; each bit is a CD. 0x21 --> Discs 1 & 6
+            cdc_tx.body[5] = 0x00;  // ¯\_(ツ)_/¯ Padding?...
+            cdc_tx.body[6] = 0x01;  // DISC number in reader. 0x01 --> Disc 1
+            cdc_tx.body[7] = 0x01;  // TRACK number.
+            cdc_tx.body_len = 8;
+            xQueueSend(kbus_tx_queue, &cdc_tx, 10);
+            ESP_LOGD(TAG, "CDC Queued: CD STATUS REPLY");
             break;
 
         default:
             ESP_LOGD(TAG, "CDC Received Other Command:");
+            ESP_LOG_BUFFER_HEXDUMP(TAG, rx_msg.body, rx_msg.body_len, ESP_LOG_DEBUG);
+    }
+}
+
+static void tel_emulator(kbus_message_t rx_msg) {
+    kbus_message_t tel_tx = {   // TEL -> SOURCE "Device Status Request" response "Device Status Ready"
+        .src = TEL,
+        .dst = rx_msg.src,      // Address to sender of received msg
+    };
+
+    switch(rx_msg.body[0]) {
+        case DEV_STAT_REQ:
+            ESP_LOGD(TAG, "TEL Received: DEVICE STATUS REQUEST");
+            tel_tx.body[0] = DEV_STAT_RDY;
+            tel_tx.body[1] = 0x00;
+            tel_tx.body_len = 2;
+            xQueueSend(kbus_tx_queue, &tel_tx, 10);
+            ESP_LOGD(TAG, "TEL Queued: DEVICE STATUS READY");
+            break;
+
+        default:
+            ESP_LOGD(TAG, "TEL Received Other Command:");
             ESP_LOG_BUFFER_HEXDUMP(TAG, rx_msg.body, rx_msg.body_len, ESP_LOG_DEBUG);
     }
 }
@@ -146,12 +180,12 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
 // TODO: Addresses lend themselves to bit twiddling stuff instead of this. Look into it in a revision ☜(ﾟヮﾟ☜)
     switch(mfl_cmd[0]) { //? State machine?...
         case 0x3B:
-            ESP_LOGI(TAG, "MFL -> RAD/TEL Button Event");
+            ESP_LOGD(TAG, "MFL -> RAD/TEL Button Event");
             
             if(last_mfl_cmd){
-                ESP_LOGI(TAG, "last_mfl_cmd: 0x%02x 0x%02x", last_mfl_cmd[0], last_mfl_cmd[1]);
+                ESP_LOGD(TAG, "last_mfl_cmd: 0x%02x 0x%02x", last_mfl_cmd[0], last_mfl_cmd[1]);
             } else {
-                ESP_LOGI(TAG, "last_mfl_cmd: NULL");
+                ESP_LOGD(TAG, "last_mfl_cmd: NULL");
             }
             malloc_last_mfl();
 
@@ -231,19 +265,19 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
                     break;
                 
                 default:
-                    ESP_LOGI(TAG, "Other MFL -> RAD/TEL Button Event: 0x%02x", mfl_cmd[1]);
+                    ESP_LOGD(TAG, "Other MFL -> RAD/TEL Button Event: 0x%02x", mfl_cmd[1]);
                     free_last_mfl(); // Command we don't care about, free last_mfl_cmd
                     break;
             }
             break;
         default:
-            ESP_LOGI(TAG, "Other MFL Button Event: 0x%02x 0x%02x", mfl_cmd[0], mfl_cmd[1]);
+            ESP_LOGD(TAG, "Other MFL Button Event: 0x%02x 0x%02x", mfl_cmd[0], mfl_cmd[1]);
             free_last_mfl(); // last_mfl_cmd should't have been allocated, but try to free anyway
             break;
     }
 
     if(bt_command != BT_CMD_NOOP) { // Only put command on queue if it's a valid one
-        ESP_LOGI(TAG, "Sending BT Command 0x%02x", bt_command);
+        ESP_LOGD(TAG, "Sending BT Command 0x%02x", bt_command);
         xQueueSend(bt_cmd_queue, &bt_command, 100);
     }
 }

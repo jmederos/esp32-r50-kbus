@@ -10,8 +10,13 @@
 
 #include "kbus_uart_driver.h"
 
+/**
+ ** Pin numbers form Sparkfun ESP32 MicroMod Schematic
+ ** https://cdn.sparkfun.com/assets/2/2/5/9/5/MicroMod_ESP32_Schematic.pdf
+ */
 #define TXD_PIN (GPIO_NUM_17)
 #define RXD_PIN (GPIO_NUM_16)
+#define ENABLE_PIN (GPIO_NUM_14)
 #define SERVICE_UART UART_NUM_2
 #define LED_PIN (GPIO_NUM_2)
 
@@ -26,6 +31,7 @@ static QueueHandle_t kbus_rx_queue;
 static QueueHandle_t kbus_tx_queue;
 static QueueHandle_t uart_rx_queue;
 
+static int kbus_send_bytes(const char* logName, const char* bytes, uint8_t numBytes);
 static void rx_task();
 static void tx_task();
 static uint8_t calc_checksum();
@@ -56,14 +62,24 @@ void init_kbus_uart_driver(QueueHandle_t rx_queue, QueueHandle_t tx_queue) {
     // Make sure we're in standard uart mode
     ESP_ERROR_CHECK(uart_set_mode(SERVICE_UART, UART_MODE_UART));
 
+    //* Doesn't work as expected **********************************
+    // Write some data to tx line so it's not in a dominant state
+    //// char kbus_init_byte = 0x00;
+    //// kbus_send_bytes("kbus-tx-init", &kbus_init_byte, 1);
+    // ************************************************************
+
+    // Create RX and TX task loops
     ESP_LOGI(TAG, "Creating kbus_uart_driver rx task");
     xTaskCreatePinnedToCore(rx_task, "uart_rx_task", RX_BUF_SIZE*4, NULL, RX_TASK_PRIORITY, NULL, 1);
     ESP_LOGI(TAG, "Creating kbus_uart_driver tx task");
     xTaskCreatePinnedToCore(tx_task, "uart_tx_task", TX_BUF_SIZE*4, NULL, TX_TASK_PRIORITY, NULL, 1);
 
     // Setup onboard LED
-    gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(LED_PIN, 0);
+    ESP_ERROR_CHECK(gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT));
+    ESP_ERROR_CHECK(gpio_set_level(LED_PIN, 0));
+
+    // Pull enable pin high so we can listen to all k-bus traffic
+    ESP_ERROR_CHECK(gpio_set_pull_mode(ENABLE_PIN, GPIO_PULLUP_ONLY));
 }
 
 static int kbus_send_bytes(const char* logName, const char* bytes, uint8_t numBytes) {
@@ -100,10 +116,10 @@ static void rx_task() {
                     ESP_LOGD(RX_TASK_TAG, "Read %d bytes from UART", event.size);
 
                     rx_message.src = msg_header[0];
-                    rx_message.body_len = msg_header[1] - 2;                    // Body length for later iterating
+                    rx_message.body_len = msg_header[1] - 2;                    // Only store body length for easier iterating
                     rx_message.dst = msg_buf[0];                                // Copy message dst address to struct
                     memcpy(rx_message.body, msg_buf + 1, msg_header[1] - 1);    // Copy message body to struct using byte offsets
-                    rx_checksum = msg_buf[msg_header[1] - 1];             // Copy message checksum to struct
+                    rx_checksum = msg_buf[msg_header[1] - 1];                   // Copy message checksum to struct
 
                     if(rx_checksum == calc_checksum(&rx_message)){
                         ESP_LOGD(RX_TASK_TAG, "KBUS\t0x%02x --> 0x%02x\tLength: %d\tCHK:0x%02x", rx_message.src, rx_message.dst, rx_message.body_len+2, rx_checksum);
