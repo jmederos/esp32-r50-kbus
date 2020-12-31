@@ -11,7 +11,9 @@
 
 #include "bt_commands.h"
 
-#define BT_CMD_TASK_PRIORITY 10
+#define BT_CMD_TASK_PRIORITY configMAX_PRIORITIES-8
+
+#define HERTZ(hz) ((1000/hz)/portTICK_RATE_MS)
 
 #define ANNOUNCE_STR        CONFIG_BT_ANNOUNCE_STR
 #define SHOULD_AUTOCONNECT  CONFIG_BT_AUTOCONNECT
@@ -60,8 +62,8 @@ int bluetooth_services_setup(QueueHandle_t bluetooth_queue){
 }
 
 static void setup_cmd_task() {
-    int tsk_ret = xTaskCreate(bt_cmd_task, "bt_cmd_tsk", 2048, NULL, BT_CMD_TASK_PRIORITY, NULL);
-    if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "bt_cmd_tsk creation failed with: %d", tsk_ret);}
+    int tsk_ret = xTaskCreatePinnedToCore(bt_cmd_task, "bt_cmd", 2048, NULL, BT_CMD_TASK_PRIORITY, NULL, 0);
+    if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "bt_cmd creation failed with: %d", tsk_ret);}
 }
 
 static void bt_cmd_task() {
@@ -147,6 +149,8 @@ static void bt_cmd_task() {
                 default:
                     ESP_LOGD(TAG, "No action registered for command 0x%02x", command);
             }
+        } else {
+            xQueueReset(bt_cmd_queue); // flush queue
         }
     }
 }

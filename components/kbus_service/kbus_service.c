@@ -1,24 +1,32 @@
+// C stdlib includes
+#include <stddef.h>
+#include <stdio.h>
+
+// FreeRTOS includes
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+
+// esp-idf includes
 #include "esp_system.h"
 #include "esp_log.h"
 
+// component includes
 #include "kbus_uart_driver.h"
 #include "kbus_service.h"
 #include "kbus_defines.h"
-
 #include "bt_commands.h"
 
-#define HERTZ(hz) ((1000/hz) / portTICK_RATE_MS)
+#define QUEUE_DEBUG
+
+#define HERTZ(hz) ((1000/hz)/portTICK_RATE_MS)
 #define SECONDS(sec) ((sec*1000) / portTICK_RATE_MS)
-#define KBUS_TASK_PRIORITY 20
-#define CDC_EMU_PRIORITY 7
+#define KBUS_TASK_PRIORITY configMAX_PRIORITIES-5
 
 static const char* TAG = "kbus_service";
 static QueueHandle_t bt_cmd_queue;
-static QueueHandle_t kbus_rx_queue;
-static QueueHandle_t kbus_tx_queue;
+static QueueHandle_t kbus_rx_queue; //TODO: Message Buffer instead of Queue
+static QueueHandle_t kbus_tx_queue; //TODO: Message Buffer instead of Queue
 
 static void kbus_rx_task();
 static void cdc_emulator(kbus_message_t rx_msg);
@@ -27,22 +35,26 @@ static void mfl_handler(uint8_t mfl_cmd[2]);
 
 static inline void send_dev_ready(uint8_t source, uint8_t dest, bool startup);
 
+#ifdef QUEUE_DEBUG
+static void create_kbus_queue_watcher();
+#endif
+
 void init_kbus_service(QueueHandle_t bluetooth_queue) {
     bt_cmd_queue = bluetooth_queue;
     kbus_rx_queue = xQueueCreate(4, sizeof(kbus_message_t));
     kbus_tx_queue = xQueueCreate(2, sizeof(kbus_message_t));
 
-    int tsk_ret = xTaskCreatePinnedToCore(kbus_rx_task, "kbus_rx_tsk", 4096, NULL, KBUS_TASK_PRIORITY, NULL, 1);
-    if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "kbus_rx_task creation failed with: %d", tsk_ret);}
+    int tsk_ret = xTaskCreatePinnedToCore(kbus_rx_task, "kbus_rx", 4096, NULL, KBUS_TASK_PRIORITY, NULL, 1);
+    if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "kbus_rx creation failed with: %d", tsk_ret);}
     init_kbus_uart_driver(kbus_rx_queue, kbus_tx_queue);
 
-    // We're emulating CDC and TEL, send a device startup packet
-    send_dev_ready(CDC, LOC, true);
-    send_dev_ready(TEL, LOC, true);
+#ifdef QUEUE_DEBUG
+    create_kbus_queue_watcher();
+#endif
 }
 
 static inline void send_dev_ready(uint8_t source, uint8_t dest, bool startup) {
-    //* SOURCE -> DEST "Device status Ready"
+    //* SOURCE -> DEST "Device Status Ready"
     kbus_message_t message = {
         .src = source,
         .dst = dest,
@@ -52,9 +64,12 @@ static inline void send_dev_ready(uint8_t source, uint8_t dest, bool startup) {
 
     // If startup, update message to
     //"Device Status Ready After Reset"
-    if(startup) { message.body[1] = 0x01; }
-
-    ESP_LOGD(TAG, "Queueing 0x%02x Startup Message", source);
+    if(startup) {
+        message.body[1] = 0x01;
+        ESP_LOGD(TAG, "Queueing 0x%02x -> 0x%02x DEVICE READY AFTER RESET", source, dest);
+    } else {
+        ESP_LOGD(TAG, "Queueing 0x%02x -> 0x%02x DEVICE READY", source, dest);
+    }
     xQueueSend(kbus_tx_queue, &message, 10);
 }
 
@@ -66,7 +81,32 @@ static void kbus_rx_task() {
             ESP_LOGD(TAG, "KBUS\t0x%02x -> 0x%02x", message.src, message.dst);
             ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_DEBUG);
 
+            switch(message.src) {
+                case MFL:
+                    ESP_LOGD(TAG, "MFL -> 0x%02x Message Received", message.dst);
+                    mfl_handler((uint8_t[2]){message.body[0], message.body[1]});
+                    break;
+
+                default:
+                    break;
+            }
+
             switch(message.dst) {
+
+                case LOC:
+                    // Noop right away on LOCAL broadcast messages. short circuit -> save some cycles
+                    break;
+
+                case GLO:
+                    // If ignition is set to Pos1_ACC, send device startup packet
+                    if(message.body_len == 2 && message.body[0] == 0x11 && message.body[1] == 0x01) {
+                        // We're emulating CDC and TEL, send a device startup packet
+                        send_dev_ready(CDC, LOC, true);
+                        send_dev_ready(TEL, LOC, true);
+                    }
+                    // Only care for this one particular GLOBAL message right now
+                    break;
+
                 case CDC:
                     ESP_LOGD(TAG, "Message for CD Changer Received");
                     ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_DEBUG);
@@ -82,22 +122,8 @@ static void kbus_rx_task() {
                 default:
                     break;
             }
-
-            switch(message.src) {
-                case IKE:
-                    ESP_LOGV(TAG, "IKE -> 0x%02x Message Received", message.dst);
-                    break;
-                case RAD:
-                    ESP_LOGV(TAG, "Radio -> 0x%02x Message Received", message.dst);
-                    break;
-                case MFL:
-                    ESP_LOGD(TAG, "MFL -> 0x%02x Message Received", message.dst);
-                    mfl_handler((uint8_t[2]){message.body[0], message.body[1]});
-                    break;
-                default:
-                    ESP_LOGV(TAG, "Message Received from 0x%02x", message.src);
-                    break;
-            }
+        } else {
+            xQueueReset(kbus_rx_queue); // flush queue
         }
     }
 }
@@ -114,7 +140,7 @@ static void cdc_emulator(kbus_message_t rx_msg) {
             ESP_LOGD(TAG, "CDC Received: DEVICE STATUS REQUEST");
             send_dev_ready(CDC, rx_msg.src, false);
             ESP_LOGD(TAG, "CDC Queued: DEVICE STATUS READY");
-            break;
+            return;
 
         case CD_CTRL_REQ: // TODO: React to different requests and reply appropriately
             ESP_LOGD(TAG, "CDC Received: CD CONTROL REQUEST");
@@ -129,11 +155,12 @@ static void cdc_emulator(kbus_message_t rx_msg) {
             cdc_tx.body_len = 8;
             xQueueSend(kbus_tx_queue, &cdc_tx, 10);
             ESP_LOGD(TAG, "CDC Queued: CD STATUS REPLY");
-            break;
+            return;
 
         default:
             ESP_LOGD(TAG, "CDC Received Other Command:");
             ESP_LOG_BUFFER_HEXDUMP(TAG, rx_msg.body, rx_msg.body_len, ESP_LOG_DEBUG);
+            break;
     }
 }
 
@@ -143,11 +170,12 @@ static void tel_emulator(kbus_message_t rx_msg) {
             ESP_LOGD(TAG, "TEL Received: DEVICE STATUS REQUEST");
             send_dev_ready(TEL, rx_msg.src, false);
             ESP_LOGD(TAG, "TEL Queued: DEVICE STATUS READY");
-            break;
+            return;
 
         default:
             ESP_LOGD(TAG, "TEL Received Other Command:");
             ESP_LOG_BUFFER_HEXDUMP(TAG, rx_msg.body, rx_msg.body_len, ESP_LOG_DEBUG);
+            break;
     }
 }
 
@@ -185,25 +213,16 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
 
             switch(mfl_cmd[1]) {
                 //* A button down event received, let's store it.
-                case 0x01: // "search up pressed"
-                case 0x02: // "R/T pressed"
-                case 0x08: { // "search down pressed"
-                    ESP_LOGD(TAG, "MFL Up or Down short press");
+                case 0x01:      // "search up pressed"
+                case 0x08:      // "search down pressed"
+                case 0x80: {    // "Send/End pressed"
+                    ESP_LOGD(TAG, "MFL short press");
                     last_mfl_cmd[0] = mfl_cmd[0];
                     last_mfl_cmd[1] = mfl_cmd[1];
                     return; // Return, don't need to take any further action other than storing opening event.
                 }
 
                 //* A long press event
-                case 0x12: // "R/T pressed long"
-                    ESP_LOGD(TAG, "MFL R/T long press");
-                    if(last_mfl_cmd[1] == mfl_cmd[1]){
-                        return; // Return, this is a repeat long press event.
-                    }
-                    last_mfl_cmd[0] = mfl_cmd[0];
-                    last_mfl_cmd[1] = mfl_cmd[1];
-                    bt_command = AVRCP_PLAY;
-                    break;
                 case 0x11: // "search up pressed long"
                     ESP_LOGD(TAG, "MFL Up long press");
                     if(last_mfl_cmd[1] == mfl_cmd[1]){
@@ -222,11 +241,20 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
                     last_mfl_cmd[1] = mfl_cmd[1];
                     bt_command = AVRCP_RWD_START;
                     break;
+                case 0x90: // "SEND/END pressed long"
+                    ESP_LOGD(TAG, "MFL R/T long press");
+                    if(last_mfl_cmd[1] == mfl_cmd[1]){
+                        return; // Return, this is a repeat long press event.
+                    }
+                    last_mfl_cmd[0] = mfl_cmd[0];
+                    last_mfl_cmd[1] = mfl_cmd[1];
+                    bt_command = AVRCP_PLAY;
+                    break;
 
                 //* A button up event, let's check previous state.
                 case 0x21: // "search up released"
-                case 0x22: // "R/T released"
                 case 0x28: // "search down released"
+                case 0xA0: // "SEND/END released"
                     ESP_LOGD(TAG, "MFL arrow button released");
                     if(last_mfl_cmd[0] == mfl_cmd[0]){
                         ESP_LOGD(TAG, "Last BT command matches");
@@ -234,13 +262,13 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
                             case 0x01:
                                 bt_command = AVRCP_NEXT;
                                 break;
-                            case 0x02:
-                                bt_command = AVRCP_STOP;
-                                break;
                             case 0x11:
                                 bt_command = AVRCP_FF_STOP;
                                 break;
-                            case 0x12:
+                            case 0x80:
+                                bt_command = AVRCP_STOP;
+                                break;
+                            case 0x90:
                                 // NOOP: Long press AVRCP_PLAY handled during previous event
                                 break;
                             case 0x08:
@@ -260,18 +288,45 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
                 
                 default:
                     ESP_LOGD(TAG, "Other MFL -> RAD/TEL Button Event: 0x%02x", mfl_cmd[1]);
-                    free_last_mfl(); // Command we don't care about, free last_mfl_cmd
+                    // free_last_mfl(); // Command we don't care about, free last_mfl_cmd
                     break;
             }
             break;
         default:
             ESP_LOGD(TAG, "Other MFL Button Event: 0x%02x 0x%02x", mfl_cmd[0], mfl_cmd[1]);
-            free_last_mfl(); // last_mfl_cmd should't have been allocated, but try to free anyway
+            // free_last_mfl(); // last_mfl_cmd should't have been allocated, but try to free anyway
             break;
     }
 
     if(bt_command != BT_CMD_NOOP) { // Only put command on queue if it's a valid one
         ESP_LOGD(TAG, "Sending BT Command 0x%02x", bt_command);
-        xQueueSend(bt_cmd_queue, &bt_command, 100);
+        xQueueSend(bt_cmd_queue, &bt_command, 10);
     }
 }
+
+#ifdef QUEUE_DEBUG
+static void kbus_queue_watcher(){
+    #define WATCHER_DELAY 10
+
+    uint8_t kb_rx = 0, kb_tx = 0, bt_tx = 0;
+    vTaskDelay(SECONDS(WATCHER_DELAY));
+
+    while(1){
+        kb_rx = uxQueueMessagesWaiting(kbus_rx_queue);
+        kb_tx = uxQueueMessagesWaiting(kbus_tx_queue);
+        bt_tx = uxQueueMessagesWaiting(bt_cmd_queue);
+
+        printf("\n%sK-Bus Service Queued Messages%s\n", "\033[1m\033[4m\033[46m\033[K", LOG_RESET_COLOR);
+        printf("kbus-rx\t%d\n", kb_rx);
+        printf("kbus-tx\t%d\n", kb_tx);
+        printf("bt-tx\t%d\n", bt_tx);
+
+        vTaskDelay(SECONDS(WATCHER_DELAY));
+    }
+}
+
+static void create_kbus_queue_watcher(){
+    int task_ret = xTaskCreate(kbus_queue_watcher, "kbus_queue_watcher", 4092, NULL, 5, NULL);
+    if(task_ret != pdPASS){ESP_LOGE(TAG, "kbus_queue_watcher creation failed with: %d", task_ret);}
+}
+#endif

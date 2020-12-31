@@ -32,6 +32,7 @@
 
 // C stdlib includes
 #include <stddef.h>
+#include <stdio.h>
 
 // FreeRTOS includes
 #include "freertos/FreeRTOS.h"
@@ -55,29 +56,47 @@
 #include "kbus_service.h"
 #include "bt_commands.h"
 
+#define SECONDS(sec) ((sec*1000) / portTICK_RATE_MS)
+
 // TODO: Add these as menuconfig items
 #define R50_BT_ENABLED
 //#define R50_WIFI_ENABLED
+#define TASK_DEBUG
 
 static const char* TAG = "r50-main";
 static QueueHandle_t bt_cmd_queue;
 
-static void sample_worker(void *pvParameter){
-    (void)(sizeof(pvParameter));
-    static int counter = 0;
+#ifdef TASK_DEBUG
+static void watcher_task(){
+    const size_t bytes_per_task = 40;
+    char *task_list_buffer = NULL;
+    vTaskDelay(SECONDS(5));
+
     while(1){
-        printf("HTTP task goes here... - counter %u\n", counter++);
-        vTaskDelay(120000 / portTICK_PERIOD_MS);
+        task_list_buffer = (char*) malloc(uxTaskGetNumberOfTasks() * bytes_per_task);
+        if (task_list_buffer == NULL) {
+            ESP_LOGE(TAG, "failed to allocate buffer for vTaskList output");
+            abort();
+        }
+
+        vTaskList(task_list_buffer);
+        printf("\n%sTask\t\tStat\tPrity\tHWM\tTsk#\tCPU%s\n", "\033[1m\033[4m\033[44;1m\033[K", LOG_RESET_COLOR);
+        printf("%s", task_list_buffer);
+
+        vTaskGetRunTimeStats(task_list_buffer);
+        printf("%sTask\t\tAbs Time\t\tUsage%%%s\n", "\033[1m\033[4m\033[42m\033[K", LOG_RESET_COLOR);
+        printf("%s", task_list_buffer);
+
+        free(task_list_buffer);
+        vTaskDelay(SECONDS(120));
     }
 }
 
-void create_server_task(void){
-    static const char* TAG = "r50-srvTsk";
-    ESP_LOGI(TAG, "Creating task");
-
-    int srvTaskRet = xTaskCreatePinnedToCore(&sample_worker, "r50-bts-loop", 4096, NULL, 5, NULL, 1);
-    if(srvTaskRet != pdPASS){ESP_LOGE(TAG, "r50-bts-loop creation failed with: %d", srvTaskRet);}
+static void create_watcher_task(){
+    int task_ret = xTaskCreate(watcher_task, "task_watcher", 4092, NULL, 5, NULL);
+    if(task_ret != pdPASS){ESP_LOGE(TAG, "task_watcher creation failed with: %d", task_ret);}
 }
+#endif
 
 static void initNVS(){
     //Initialize NVS
@@ -98,8 +117,12 @@ int app_main(void){
     // Setup kbus service; has side-effect of initializing and starting UART driver.
     init_kbus_service(bt_cmd_queue);
 
+#ifdef TASK_DEBUG
+    ESP_LOGI(TAG, "Creating Task Watcher");
+    create_watcher_task();
+#endif
+
 #ifdef R50_WIFI_ENABLED // Gating wifi and bt since there's still issues with them running concurrently.
-    create_server_task();
     wifi_init_softap();
 #endif
 

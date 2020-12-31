@@ -1,14 +1,22 @@
+// C stdlib includes
+#include <stddef.h>
+#include <stdio.h>
+#include <string.h>
+
+// FreeRTOS includes
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+// esp-idf includes
 #include "esp_system.h"
 #include "esp_log.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
 
-#include "string.h"
-
+// component includes
 #include "kbus_uart_driver.h"
+
+#define QUEUE_DEBUG
 
 /**
  ** Pin numbers form Sparkfun ESP32 MicroMod Schematic
@@ -20,8 +28,11 @@
 #define SERVICE_UART UART_NUM_2
 #define LED_PIN (GPIO_NUM_2)
 
-#define RX_TASK_PRIORITY configMAX_PRIORITIES-1
-#define TX_TASK_PRIORITY RX_TASK_PRIORITY-3
+#define HERTZ(hz) ((1000/hz)/portTICK_RATE_MS)
+#define SECONDS(sec) ((sec*1000) / portTICK_RATE_MS)
+
+#define TX_TASK_PRIORITY configMAX_PRIORITIES-1
+#define RX_TASK_PRIORITY TX_TASK_PRIORITY-10
 
 static const int RX_BUF_SIZE = 2048;
 static const int TX_BUF_SIZE = 1024;
@@ -35,6 +46,11 @@ static int kbus_send_bytes(const char* logName, const char* bytes, uint8_t numBy
 static void rx_task();
 static void tx_task();
 static uint8_t calc_checksum();
+
+#ifdef QUEUE_DEBUG
+static void create_uart_queue_watcher();
+#endif
+
 
 void init_kbus_uart_driver(QueueHandle_t rx_queue, QueueHandle_t tx_queue) {
     // Store kbus message queues
@@ -70,9 +86,9 @@ void init_kbus_uart_driver(QueueHandle_t rx_queue, QueueHandle_t tx_queue) {
 
     // Create RX and TX task loops
     ESP_LOGI(TAG, "Creating kbus_uart_driver rx task");
-    xTaskCreatePinnedToCore(rx_task, "uart_rx_task", RX_BUF_SIZE*4, NULL, RX_TASK_PRIORITY, NULL, 1);
+    xTaskCreatePinnedToCore(rx_task, "uart_rx", RX_BUF_SIZE*4, NULL, RX_TASK_PRIORITY, NULL, 1);
     ESP_LOGI(TAG, "Creating kbus_uart_driver tx task");
-    xTaskCreatePinnedToCore(tx_task, "uart_tx_task", TX_BUF_SIZE*4, NULL, TX_TASK_PRIORITY, NULL, 1);
+    xTaskCreatePinnedToCore(tx_task, "uart_tx", TX_BUF_SIZE*4, NULL, TX_TASK_PRIORITY, NULL, 1);
 
     // Setup onboard LED
     ESP_ERROR_CHECK(gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT));
@@ -80,11 +96,16 @@ void init_kbus_uart_driver(QueueHandle_t rx_queue, QueueHandle_t tx_queue) {
 
     // Pull enable pin high so we can listen to all k-bus traffic
     ESP_ERROR_CHECK(gpio_set_pull_mode(ENABLE_PIN, GPIO_PULLUP_ONLY));
+
+#ifdef QUEUE_DEBUG
+    create_uart_queue_watcher();
+#endif
 }
 
 static int kbus_send_bytes(const char* logName, const char* bytes, uint8_t numBytes) {
     ESP_LOGV(logName, "Writing %02x bytes to kbus", numBytes);
     const int txBytes = uart_write_bytes(SERVICE_UART, bytes, numBytes);
+    uart_wait_tx_done(SERVICE_UART, (portTickType)portMAX_DELAY); // Block until all bytes are sent
     ESP_LOGD(logName, "Wrote %02x bytes to kbus", txBytes);
     return txBytes;
 }
@@ -93,7 +114,7 @@ static int kbus_send_bytes(const char* logName, const char* bytes, uint8_t numBy
  * @brief Task that handles incoming kbus data
  */
 static void rx_task() {
-    static const char *RX_TASK_TAG = "uart_rx_task";
+    static const char *RX_TASK_TAG = "uart_rx";
 
     uart_event_t event;
     kbus_message_t rx_message;
@@ -102,7 +123,7 @@ static void rx_task() {
     uint8_t* msg_buf = (uint8_t*) malloc(257); // Size of max possible kbus message
     
     while(1) {
-        if(xQueueReceive(uart_rx_queue, (void * )&event, (portTickType)portMAX_DELAY)) {
+        if(xQueueReceive(uart_rx_queue, (void * )&event,  (portTickType)portMAX_DELAY)) {
             rx_checksum = 0;
             bzero(msg_buf, 257);
             bzero(rx_message.body, sizeof(rx_message.body));
@@ -123,8 +144,9 @@ static void rx_task() {
 
                     if(rx_checksum == calc_checksum(&rx_message)){
                         ESP_LOGD(RX_TASK_TAG, "KBUS\t0x%02x --> 0x%02x\tLength: %d\tCHK:0x%02x", rx_message.src, rx_message.dst, rx_message.body_len+2, rx_checksum);
-                        xQueueSend(kbus_rx_queue, &rx_message, 1600);
+                        xQueueSend(kbus_rx_queue, &rx_message, 10);
                     } else {
+                        bzero(msg_buf, 257);        // flush buffer
                         ESP_LOGW(RX_TASK_TAG, "Invalid message received!");
                     }
                     ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, rx_message.body, event.size-4, ESP_LOG_DEBUG);
@@ -133,10 +155,16 @@ static void rx_task() {
                     break;
 
                 case UART_PARITY_ERR:
+                    ESP_LOGW(RX_TASK_TAG, "UART_PARITY_ERR");
+                    break;
                 case UART_FRAME_ERR:
-                case UART_FIFO_OVF:
-                case UART_BUFFER_FULL:
+                    ESP_LOGW(RX_TASK_TAG, "UART_FRAME_ERR");
+                    break;
+                case UART_BUFFER_FULL:  // Error 0x02
+                case UART_FIFO_OVF:     // Error 0x03
                     ESP_LOGE(RX_TASK_TAG, "UART Error: %d", event.type);
+                    bzero(msg_buf, 257);        // flush buffer
+                    xQueueReset(uart_rx_queue); // flush queue
                     break;
 
                 default:
@@ -150,7 +178,7 @@ static void rx_task() {
 }
 
 static void tx_task() {
-    static const char *TX_TASK_TAG = "uart_tx_task";
+    static const char *TX_TASK_TAG = "uart_tx";
 
     kbus_message_t tx_message;
     char* tx_buf = (char*) malloc(257);
@@ -186,6 +214,8 @@ static void tx_task() {
             } else {
                 ESP_LOGW(TX_TASK_TAG, "Only sent %d/%d bytes!", bytes_sent, total_tx_bytes);
             }
+        } else {
+            xQueueReset(kbus_tx_queue); // flush queue
         }
     }
 }
@@ -199,3 +229,33 @@ static uint8_t calc_checksum(kbus_message_t* message) {
     }
     return checksum;
 }
+
+#ifdef QUEUE_DEBUG
+static void uart_queue_watcher(){
+    #define WATCHER_DELAY 10
+
+    uint8_t kb_rx = 0, kb_tx = 0, uart_rx = 0;
+    int uart_fifo = 0;
+    vTaskDelay(SECONDS(WATCHER_DELAY));
+
+    while(1){
+        kb_rx = uxQueueMessagesWaiting(kbus_rx_queue);
+        kb_tx = uxQueueMessagesWaiting(kbus_tx_queue);
+        uart_rx = uxQueueMessagesWaiting(uart_rx_queue);
+        ESP_ERROR_CHECK(uart_get_buffered_data_len(SERVICE_UART, (size_t*)&uart_fifo));
+
+        printf("\n%sUART Driver Queued Messages%s\n", "\033[1m\033[4m\033[43m\033[K", LOG_RESET_COLOR);
+        printf("kbus-rx\t%d\n", kb_rx);
+        printf("kbus-tx\t%d\n", kb_tx);
+        printf("uart_rx\t%d\n", uart_rx);
+        printf("uart_fi\t%d\n", uart_fifo);
+
+        vTaskDelay(SECONDS(WATCHER_DELAY));
+    }
+}
+
+static void create_uart_queue_watcher(){
+    int task_ret = xTaskCreate(uart_queue_watcher, "uart_queue_watcher", 4092, NULL, 5, NULL);
+    if(task_ret != pdPASS){ESP_LOGE(TAG, "uart_queue_watcher creation failed with: %d", task_ret);}
+}
+#endif
