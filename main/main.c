@@ -60,8 +60,10 @@
 
 // TODO: Add these as menuconfig items
 #define R50_BT_ENABLED
-//#define R50_WIFI_ENABLED
-#define TASK_DEBUG
+// #define R50_WIFI_ENABLED
+
+// ! Debug Flags
+// #define TASK_DEBUG
 
 static const char* TAG = "r50-main";
 static QueueHandle_t bt_cmd_queue;
@@ -93,7 +95,7 @@ static void watcher_task(){
 }
 
 static void create_watcher_task(){
-    int task_ret = xTaskCreate(watcher_task, "task_watcher", 4092, NULL, 5, NULL);
+    int task_ret = xTaskCreate(watcher_task, "task_watcher", 4096, NULL, 5, NULL);
     if(task_ret != pdPASS){ESP_LOGE(TAG, "task_watcher creation failed with: %d", task_ret);}
 }
 #endif

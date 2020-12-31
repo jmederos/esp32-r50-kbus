@@ -12,9 +12,6 @@
 #include "bt_commands.h"
 
 #define BT_CMD_TASK_PRIORITY configMAX_PRIORITIES-8
-
-#define HERTZ(hz) ((1000/hz)/portTICK_RATE_MS)
-
 #define ANNOUNCE_STR        CONFIG_BT_ANNOUNCE_STR
 #define SHOULD_AUTOCONNECT  CONFIG_BT_AUTOCONNECT
 

@@ -16,7 +16,8 @@
 // component includes
 #include "kbus_uart_driver.h"
 
-#define QUEUE_DEBUG
+// ! Debug Flags
+// #define QUEUE_DEBUG
 
 /**
  ** Pin numbers form Sparkfun ESP32 MicroMod Schematic
@@ -34,8 +35,9 @@
 #define TX_TASK_PRIORITY configMAX_PRIORITIES-1
 #define RX_TASK_PRIORITY TX_TASK_PRIORITY-10
 
+static const int RX_QUEUE_SIZE = 32;
 static const int RX_BUF_SIZE = 2048;
-static const int TX_BUF_SIZE = 1024;
+static const int TX_BUF_SIZE = 512;
 static const char* TAG = "kbus_driver";
 
 static QueueHandle_t kbus_rx_queue;
@@ -74,7 +76,7 @@ void init_kbus_uart_driver(QueueHandle_t rx_queue, QueueHandle_t tx_queue) {
     // uart_set_pin() sets GPIO_PULLUP_ONLY on RX, not TX. Need it to avoid taking control of k-bus when only listening.
     ESP_ERROR_CHECK(gpio_set_pull_mode(TXD_PIN, GPIO_PULLUP_ONLY));
     // We won't use a buffer for sending data.
-    ESP_ERROR_CHECK(uart_driver_install(SERVICE_UART, RX_BUF_SIZE, TX_BUF_SIZE, 32, &uart_rx_queue, 0));
+    ESP_ERROR_CHECK(uart_driver_install(SERVICE_UART, RX_BUF_SIZE, TX_BUF_SIZE, RX_QUEUE_SIZE, &uart_rx_queue, 0));
     // Make sure we're in standard uart mode
     ESP_ERROR_CHECK(uart_set_mode(SERVICE_UART, UART_MODE_UART));
 
@@ -89,6 +91,13 @@ void init_kbus_uart_driver(QueueHandle_t rx_queue, QueueHandle_t tx_queue) {
     xTaskCreatePinnedToCore(rx_task, "uart_rx", RX_BUF_SIZE*4, NULL, RX_TASK_PRIORITY, NULL, 1);
     ESP_LOGI(TAG, "Creating kbus_uart_driver tx task");
     xTaskCreatePinnedToCore(tx_task, "uart_tx", TX_BUF_SIZE*4, NULL, TX_TASK_PRIORITY, NULL, 1);
+
+    /**********************************************************************************************************
+     * TODO:  K-Bus Message Decoding task loop with streambuffer (when 4.3 becomes available)
+     * //Create K-Bus Message Decoding task loop and streambuffer
+     * ESP_LOGI(TAG, "Creating kbus_uart_driver decode task");
+     * xTaskCreatePinnedToCore(kbus_decode_task, "kb_decode", RX_BUF_SIZE*2, NULL, TX_TASK_PRIORITY, NULL, 1);
+     **********************************************************************************************************/
 
     // Setup onboard LED
     ESP_ERROR_CHECK(gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT));
@@ -110,46 +119,73 @@ static int kbus_send_bytes(const char* logName, const char* bytes, uint8_t numBy
     return txBytes;
 }
 
+static uint8_t decode_and_send_buffer(uint8_t* buffer, size_t event_size) {
+    uint8_t messages_sent = 0;
+
+    size_t cur_byte = 0;
+    kbus_message_t message;
+    uint8_t msg_len = 0;
+    uint8_t rx_checksum = 0;
+    uint8_t cal_checksum = 0;
+
+    if(event_size < 5) { //Don't bother decoding, less bytes than smallest valid kbus message.
+        ESP_LOGW("decode_buf", "Less than 5 bytes in buffer!");
+        return messages_sent;
+    }
+
+    do {
+        message.src = buffer[cur_byte];     // Store message source address
+        msg_len = buffer[cur_byte + 1];     // Keep msg_len locally readability
+        message.body_len = msg_len - 2;     // Only store body_len => passed message length - (dst_byte + chksum_byte)
+        message.dst = buffer[cur_byte + 2]; // Store message dest address
+
+        cur_byte += 3;                      // Advance pointer to start of message body
+        memcpy(message.body, buffer + cur_byte, message.body_len); // Copy message body to struct
+
+        cur_byte += (message.body_len);     // Advance pointer to checksum byte
+        rx_checksum = buffer[cur_byte];     // Keep for comparision to calculated value
+
+        cal_checksum = calc_checksum(&message);
+        if(rx_checksum == cal_checksum){
+            ESP_LOG_BUFFER_HEXDUMP("decode_buf", message.body, message.body_len, ESP_LOG_DEBUG);
+            xQueueSend(kbus_rx_queue, &message, (portTickType)portMAX_DELAY);
+            messages_sent++;
+        } else {
+            ESP_LOGI("decode_buf", "Checksum mismatch!");
+            ESP_LOGD("decode_buf", "rx_chk: 0x%02x\tcal_chk: 0x%02x", rx_checksum, cal_checksum);
+            ESP_LOGD("decode_buf", "0x%02x -> 0x%02x\t0x%02x bytes\t0x%02x", message.src, message.dst, msg_len, message.body[0]);
+            ESP_LOG_BUFFER_HEXDUMP("decode_buf", buffer, event_size, ESP_LOG_DEBUG);
+            ESP_LOGD("decode_buf", "cur_byte: %d\t event_size: %d", cur_byte, event_size);
+        }
+    } while(cur_byte < event_size);
+
+    return messages_sent;
+}
+
 /**
- * @brief Task that handles incoming kbus data
+ * @brief Task that handles incoming UART data
  */
 static void rx_task() {
     static const char *RX_TASK_TAG = "uart_rx";
-
     uart_event_t event;
-    kbus_message_t rx_message;
-    uint8_t rx_checksum = 0;
-    uint8_t msg_header[2] = {0,0};
-    uint8_t* msg_buf = (uint8_t*) malloc(257); // Size of max possible kbus message
-    
+    uint8_t* msg_buf = (uint8_t*) malloc(RX_BUF_SIZE);
+    uint8_t msgs_sent = 0;
+
     while(1) {
-        if(xQueueReceive(uart_rx_queue, (void * )&event,  (portTickType)portMAX_DELAY)) {
-            rx_checksum = 0;
-            bzero(msg_buf, 257);
-            bzero(rx_message.body, sizeof(rx_message.body));
+        if(xQueueReceive(uart_rx_queue, (void * )&event, (portTickType)portMAX_DELAY)) {
+            bzero(msg_buf, RX_BUF_SIZE);
 
             switch(event.type) {
                 case UART_DATA:
                     gpio_set_level(LED_PIN, 1); // Turn on module LED
 
-                    uart_read_bytes(SERVICE_UART, msg_header, 2, 0);            // Read header: src_addr + msg_len
-                    uart_read_bytes(SERVICE_UART, msg_buf, msg_header[1], 0);   // Only read the bytes the message says to read
+                    uart_read_bytes(SERVICE_UART, msg_buf, event.size, 0);      // Ensure we read the whole event to avoid filling buffer
                     ESP_LOGD(RX_TASK_TAG, "Read %d bytes from UART", event.size);
 
-                    rx_message.src = msg_header[0];
-                    rx_message.body_len = msg_header[1] - 2;                    // Only store body length for easier iterating
-                    rx_message.dst = msg_buf[0];                                // Copy message dst address to struct
-                    memcpy(rx_message.body, msg_buf + 1, msg_header[1] - 1);    // Copy message body to struct using byte offsets
-                    rx_checksum = msg_buf[msg_header[1] - 1];                   // Copy message checksum to struct
+                    msgs_sent = decode_and_send_buffer(msg_buf, event.size);
+                    ESP_LOGD(RX_TASK_TAG, "Sent %d messages to kbus service", msgs_sent);
 
-                    if(rx_checksum == calc_checksum(&rx_message)){
-                        ESP_LOGD(RX_TASK_TAG, "KBUS\t0x%02x --> 0x%02x\tLength: %d\tCHK:0x%02x", rx_message.src, rx_message.dst, rx_message.body_len+2, rx_checksum);
-                        xQueueSend(kbus_rx_queue, &rx_message, 10);
-                    } else {
-                        bzero(msg_buf, 257);        // flush buffer
-                        ESP_LOGW(RX_TASK_TAG, "Invalid message received!");
-                    }
-                    ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, rx_message.body, event.size-4, ESP_LOG_DEBUG);
+                    ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, msg_buf, event.size, ESP_LOG_DEBUG);
 
                     gpio_set_level(LED_PIN, 0);
                     break;
@@ -163,14 +199,17 @@ static void rx_task() {
                 case UART_BUFFER_FULL:  // Error 0x02
                 case UART_FIFO_OVF:     // Error 0x03
                     ESP_LOGE(RX_TASK_TAG, "UART Error: %d", event.type);
-                    bzero(msg_buf, 257);        // flush buffer
-                    xQueueReset(uart_rx_queue); // flush queue
+                    bzero(msg_buf, RX_BUF_SIZE);    // clear buffer
+                    xQueueReset(uart_rx_queue);     // reset queue
+                    uart_flush(SERVICE_UART);       // flush UART ring buffer
                     break;
 
                 default:
                     ESP_LOGI(RX_TASK_TAG, "Other UART Event: %d", event.type);
                     break;
             }
+        } else {
+            uart_flush(SERVICE_UART);   // flush UART ring buffer if nothing left to read from queue.
         }
     }
     free(msg_buf);
@@ -214,8 +253,6 @@ static void tx_task() {
             } else {
                 ESP_LOGW(TX_TASK_TAG, "Only sent %d/%d bytes!", bytes_sent, total_tx_bytes);
             }
-        } else {
-            xQueueReset(kbus_tx_queue); // flush queue
         }
     }
 }
@@ -255,7 +292,7 @@ static void uart_queue_watcher(){
 }
 
 static void create_uart_queue_watcher(){
-    int task_ret = xTaskCreate(uart_queue_watcher, "uart_queue_watcher", 4092, NULL, 5, NULL);
+    int task_ret = xTaskCreate(uart_queue_watcher, "uart_queue_watcher", 4096, NULL, 5, NULL);
     if(task_ret != pdPASS){ESP_LOGE(TAG, "uart_queue_watcher creation failed with: %d", task_ret);}
 }
 #endif

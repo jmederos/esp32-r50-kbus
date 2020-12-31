@@ -17,7 +17,8 @@
 #include "kbus_defines.h"
 #include "bt_commands.h"
 
-#define QUEUE_DEBUG
+// ! Debug Flags
+// #define QUEUE_DEBUG
 
 #define HERTZ(hz) ((1000/hz)/portTICK_RATE_MS)
 #define SECONDS(sec) ((sec*1000) / portTICK_RATE_MS)
@@ -25,8 +26,8 @@
 
 static const char* TAG = "kbus_service";
 static QueueHandle_t bt_cmd_queue;
-static QueueHandle_t kbus_rx_queue; //TODO: Message Buffer instead of Queue
-static QueueHandle_t kbus_tx_queue; //TODO: Message Buffer instead of Queue
+static QueueHandle_t kbus_rx_queue; //TODO: Message Buffer instead of Queue... lol, not available on esp-idf 4.0.2; will be on 4.3
+static QueueHandle_t kbus_tx_queue; //TODO: See https://github.com/espressif/esp-idf/issues/4945 for details
 
 static void kbus_rx_task();
 static void cdc_emulator(kbus_message_t rx_msg);
@@ -41,8 +42,8 @@ static void create_kbus_queue_watcher();
 
 void init_kbus_service(QueueHandle_t bluetooth_queue) {
     bt_cmd_queue = bluetooth_queue;
-    kbus_rx_queue = xQueueCreate(4, sizeof(kbus_message_t));
-    kbus_tx_queue = xQueueCreate(2, sizeof(kbus_message_t));
+    kbus_rx_queue = xQueueCreate(8, sizeof(kbus_message_t));
+    kbus_tx_queue = xQueueCreate(4, sizeof(kbus_message_t));
 
     int tsk_ret = xTaskCreatePinnedToCore(kbus_rx_task, "kbus_rx", 4096, NULL, KBUS_TASK_PRIORITY, NULL, 1);
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "kbus_rx creation failed with: %d", tsk_ret);}
@@ -70,7 +71,7 @@ static inline void send_dev_ready(uint8_t source, uint8_t dest, bool startup) {
     } else {
         ESP_LOGD(TAG, "Queueing 0x%02x -> 0x%02x DEVICE READY", source, dest);
     }
-    xQueueSend(kbus_tx_queue, &message, 10);
+    xQueueSend(kbus_tx_queue, &message, (portTickType)portMAX_DELAY);
 }
 
 static void kbus_rx_task() {
@@ -153,7 +154,7 @@ static void cdc_emulator(kbus_message_t rx_msg) {
             cdc_tx.body[6] = 0x01;  // DISC number in reader. 0x01 --> Disc 1
             cdc_tx.body[7] = 0x01;  // TRACK number.
             cdc_tx.body_len = 8;
-            xQueueSend(kbus_tx_queue, &cdc_tx, 10);
+            xQueueSend(kbus_tx_queue, &cdc_tx, (portTickType)portMAX_DELAY);
             ESP_LOGD(TAG, "CDC Queued: CD STATUS REPLY");
             return;
 
@@ -300,7 +301,7 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
 
     if(bt_command != BT_CMD_NOOP) { // Only put command on queue if it's a valid one
         ESP_LOGD(TAG, "Sending BT Command 0x%02x", bt_command);
-        xQueueSend(bt_cmd_queue, &bt_command, 10);
+        xQueueSend(bt_cmd_queue, &bt_command, (portTickType)portMAX_DELAY);
     }
 }
 
@@ -326,7 +327,7 @@ static void kbus_queue_watcher(){
 }
 
 static void create_kbus_queue_watcher(){
-    int task_ret = xTaskCreate(kbus_queue_watcher, "kbus_queue_watcher", 4092, NULL, 5, NULL);
+    int task_ret = xTaskCreate(kbus_queue_watcher, "kbus_queue_watcher", 4096, NULL, 5, NULL);
     if(task_ret != pdPASS){ESP_LOGE(TAG, "kbus_queue_watcher creation failed with: %d", task_ret);}
 }
 #endif
