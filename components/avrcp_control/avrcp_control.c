@@ -4,6 +4,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+// FreeRTOS includes
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+
+// esp-idf includes
 #include "esp_system.h"
 #include "esp_log.h"
 
@@ -13,7 +19,7 @@
 
 static const char* TAG = "avrcp-ctl";
 
-static int volume_percentage = 0; 
+static TaskHandle_t autoconnect_task;
 
 static uint8_t events_num = 3;
 static uint8_t events[] = {
@@ -37,15 +43,19 @@ static uint8_t  sdp_avrcp_controller_service_buffer[200];
 static uint8_t  device_id_sdp_service_buffer[100];
 
 static uint16_t avrcp_cid = 0;
-static uint8_t  avrcp_connected = 0;
+static bool     avrcp_connected = false;
 static uint8_t  avrcp_subevent_value[100];
 
 /* Setup AVRCP service */
 static void avrcp_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
 static void avrcp_controller_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
 
+int avrcp_setup(char* announce_str) {
+    return avrcp_setup_with_autoconnect(announce_str, "00:00:00:00:00:00", NULL);
+}
 
-int avrcp_setup(char* announce_str, char* cxn_address){
+int avrcp_setup_with_autoconnect(char* announce_str, char* cxn_address, TaskHandle_t bt_auto_task){
+    autoconnect_task = bt_auto_task;
     
     // Initialize AVRCP service
     avrcp_init();
@@ -80,14 +90,19 @@ int avrcp_setup(char* announce_str, char* cxn_address){
     // Parse and store connection address
     sscanf_bd_addr(cxn_address, device_addr);
 
+    // Set the avrcp_initialized bit
+    if(autoconnect_task != NULL) xTaskNotify(autoconnect_task, 0x01, eSetBits);
+
     return 0;
 }
 
 uint8_t avrcp_ctl_connect() {
+    if(avrcp_connected == true) return ERROR_CODE_SUCCESS;
     return avrcp_connect(device_addr, &avrcp_cid);
 }
 
 uint8_t avrcp_ctl_disconnect() {
+    if(avrcp_connected == false) return ERROR_CODE_SUCCESS;
     return avrcp_disconnect(avrcp_cid);
 }
 
@@ -143,11 +158,13 @@ static void avrcp_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
             if (status != ERROR_CODE_SUCCESS){
                 ESP_LOGW(TAG, "AVRCP: Connection failed: status 0x%02x", status);
                 avrcp_cid = 0;
+                // Unset avrcp_connected bit
+                if(autoconnect_task != NULL) xTaskNotify(autoconnect_task, 0x01, eSetValueWithOverwrite);
                 return;
             }
             
             avrcp_cid = local_cid;
-            avrcp_connected = 1;
+            avrcp_connected = true;
             avrcp_subevent_connection_established_get_bd_addr(packet, adress);
             ESP_LOGI(TAG, "AVRCP: Connected to %s, cid 0x%02x", bd_addr_to_str(adress), avrcp_cid);
 
@@ -155,13 +172,18 @@ static void avrcp_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
             avrcp_controller_enable_notification(avrcp_cid, AVRCP_NOTIFICATION_EVENT_PLAYBACK_STATUS_CHANGED);
             avrcp_controller_enable_notification(avrcp_cid, AVRCP_NOTIFICATION_EVENT_NOW_PLAYING_CONTENT_CHANGED);
             avrcp_controller_enable_notification(avrcp_cid, AVRCP_NOTIFICATION_EVENT_TRACK_CHANGED);
+
+            // Set avrcp_connected bit
+            if(autoconnect_task != NULL) xTaskNotify(autoconnect_task, 0x02, eSetBits);
             return;
         }
         
         case AVRCP_SUBEVENT_CONNECTION_RELEASED:
             ESP_LOGI(TAG, "AVRCP: Channel released: cid 0x%02x", avrcp_subevent_connection_released_get_avrcp_cid(packet));
             avrcp_cid = 0;
-            avrcp_connected = 0;
+            avrcp_connected = false;
+            // Unset avrcp_connected bit
+            if(autoconnect_task != NULL) xTaskNotify(autoconnect_task, 0x01, eSetValueWithOverwrite);
             return;
         default:
             break;

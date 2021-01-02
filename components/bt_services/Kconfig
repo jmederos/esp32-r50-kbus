@@ -11,6 +11,13 @@ menu "K-Bus Bluetooth Service"
         default n
         help
             "Should ESP32 autoconnect to address defined in BT_AUTOCONNECT_ADDR?"
+    
+    config BT_MAX_RETRIES
+        int "Max Autoconnect Retries"
+        default 12
+        depends on BT_AUTOCONNECT
+        help
+            "Max number of times ESP32 should try to autoconnect to BT_AUTOCONNECT_ADDR."
 
     config BT_AUTOCONNECT_ADDR
         string "Autoconnect Address"

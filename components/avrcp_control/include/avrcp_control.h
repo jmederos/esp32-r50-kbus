@@ -5,7 +5,8 @@
 #include <stdint.h>
 
 /* Setup AVRCP service */
-int avrcp_setup(char* announce_str, char* cxn_address);
+int avrcp_setup(char* announce_str);
+int avrcp_setup_with_autoconnect(char* announce_str, char* cxn_address, TaskHandle_t bt_auto_task);
 
 uint8_t avrcp_ctl_connect();
 

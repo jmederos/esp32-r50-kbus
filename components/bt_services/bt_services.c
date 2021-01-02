@@ -1,31 +1,42 @@
+// FreeRTOS includes
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+
+// esp-idf includes
 #include "esp_system.h"
 #include "esp_log.h"
 
+// component includes
 #include "btstack.h"
 #include "btstack_port_esp32.h"
+
 #include "bt_services.h"
 #include "avrcp_control.h"
 
 #include "bt_commands.h"
 
-#define BT_CMD_TASK_PRIORITY configMAX_PRIORITIES-8
+#define SECONDS(sec) ((sec*1000) / portTICK_RATE_MS)
+
+#define BT_TASK_PRIORITY    configMAX_PRIORITIES-8
+#define AUTOCON_TASK_PRIORITY BT_TASK_PRIORITY-10
 #define ANNOUNCE_STR        CONFIG_BT_ANNOUNCE_STR
 #define SHOULD_AUTOCONNECT  CONFIG_BT_AUTOCONNECT
 
 #if SHOULD_AUTOCONNECT
     #define AUTOCONNECT_ADDR    CONFIG_BT_AUTOCONNECT_ADDR
-#else
-    #define AUTOCONNECT_ADDR "00:00:00:00:00:00"
+    #define MAX_CONN_RETRIES    CONFIG_BT_MAX_RETRIES
 #endif
 
 static const char* TAG = "bt-services";
 static QueueHandle_t bt_cmd_queue;
+static TaskHandle_t bt_autocxn_task;
 
 static void setup_cmd_task();
 static void bt_cmd_task();
+
+static void setup_autoconnect_task();
+static void bt_autoconnect_task();
 
 int bluetooth_services_setup(QueueHandle_t bluetooth_queue){    
     // optional: enable packet logger
@@ -38,8 +49,15 @@ int bluetooth_services_setup(QueueHandle_t bluetooth_queue){
     l2cap_init();
     // Initialize SDP
     sdp_init();
+
+#if SHOULD_AUTOCONNECT
+    setup_autoconnect_task();
     // Setup avrcp ↙↙↙announce_str  ↙↙↙autoconnect device address
-    avrcp_setup(ANNOUNCE_STR, AUTOCONNECT_ADDR); //TODO: store in NVS for dynamic configuration w/web server
+    avrcp_setup_with_autoconnect(ANNOUNCE_STR, AUTOCONNECT_ADDR, bt_autocxn_task); //TODO: store in NVS for dynamic configuration w/web server
+#else      
+    // Setup avrcp ↙↙↙announce_str  ↙↙↙autoconnect device address
+    avrcp_setup(ANNOUNCE_STR); //TODO: store in NVS for dynamic configuration w/web server
+#endif
     
     // Setup bt command handler
     bt_cmd_queue = bluetooth_queue;
@@ -50,16 +68,56 @@ int bluetooth_services_setup(QueueHandle_t bluetooth_queue){
     hci_power_control(HCI_POWER_ON);
 
     //? In case web + bt don't work simulatneously, maybe add SSP or BTLE service for config instead
-
-    #if SHOULD_AUTOCONNECT //If autoconnect is enabled, attempt to connect right after hci power on
-        avrcp_ctl_connect();
-    #endif
-
     return 0;
 }
 
+static void setup_autoconnect_task() {
+    int tsk_ret = xTaskCreatePinnedToCore(bt_autoconnect_task, "bt_auto_con", 4096, NULL, AUTOCON_TASK_PRIORITY, &bt_autocxn_task, 0);
+    if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "bt_auto_con creation failed with: %d", tsk_ret);}
+}
+
+static void bt_autoconnect_task() {
+    static const char* TASK_TAG = "bt_auto_con";
+    uint32_t avrcp_status = 0;
+    uint16_t retry_delay = 1;
+    uint8_t cxn_attempt_count = 0;
+
+    ESP_LOGD(TASK_TAG, "Autoconnect task started. Blocking while BT boots...");
+    vTaskDelay(SECONDS(10)); // Block for 10 seconds while bt boots...
+
+    while(1) {
+        ESP_LOGD(TASK_TAG, "Waiting for AVRCP Notification...");
+        xTaskNotifyWait(0x00000000, 0x00000000, &avrcp_status, portMAX_DELAY);
+
+        ESP_LOGD(TASK_TAG, "Notification Receieved 0x%08x", avrcp_status);
+
+        // avrcp_did_init bit set
+        if(avrcp_status & 0x01) {
+
+            // if avrcp connected flag is set
+            if( (avrcp_status & 0x02) ) {
+                // Reset counter and delay
+                cxn_attempt_count = 0;
+                retry_delay = 1;
+
+                ESP_LOGI(TASK_TAG, "Successfully connected to %s", AUTOCONNECT_ADDR);
+            } else if(cxn_attempt_count < MAX_CONN_RETRIES) { // Otherwise, connected flag is unset; let's check cxn_attempts and retry.
+
+                ESP_LOGI(TASK_TAG, "Attempting bt autoconnect: %02d/%02d", cxn_attempt_count + 1, MAX_CONN_RETRIES);
+                
+                vTaskDelay(SECONDS(retry_delay));
+                avrcp_ctl_connect();
+                cxn_attempt_count++;
+
+                // Every 3 connection attempts increase delay
+                if((cxn_attempt_count % 3) == 0) retry_delay = (retry_delay * retry_delay) + 1;
+            }
+        }
+    }
+}
+
 static void setup_cmd_task() {
-    int tsk_ret = xTaskCreatePinnedToCore(bt_cmd_task, "bt_cmd", 2048, NULL, BT_CMD_TASK_PRIORITY, NULL, 0);
+    int tsk_ret = xTaskCreatePinnedToCore(bt_cmd_task, "bt_cmd", 2048, NULL, BT_TASK_PRIORITY, NULL, 0);
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "bt_cmd creation failed with: %d", tsk_ret);}
 }
 

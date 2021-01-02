@@ -113,16 +113,16 @@ static void initNVS(){
 int app_main(void){
     initNVS();
 
+#ifdef TASK_DEBUG
+    ESP_LOGI(TAG, "Creating Task Watcher");
+    create_watcher_task();
+#endif
+
     // Setup bluetooth command queue
     bt_cmd_queue = xQueueCreate(4, sizeof(bt_cmd_type_t));
 
     // Setup kbus service; has side-effect of initializing and starting UART driver.
     init_kbus_service(bt_cmd_queue);
-
-#ifdef TASK_DEBUG
-    ESP_LOGI(TAG, "Creating Task Watcher");
-    create_watcher_task();
-#endif
 
 #ifdef R50_WIFI_ENABLED // Gating wifi and bt since there's still issues with them running concurrently.
     wifi_init_softap();
