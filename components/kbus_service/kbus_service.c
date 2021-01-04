@@ -17,6 +17,7 @@
 #include "kbus_service.h"
 #include "kbus_defines.h"
 #include "bt_commands.h"
+#include "sdrs_emulator.h"
 
 // ! Debug Flags
 // #define QUEUE_DEBUG
@@ -30,15 +31,13 @@ static QueueHandle_t bt_cmd_queue;
 static QueueHandle_t kbus_rx_queue; //TODO: Message Buffer instead of Queue... lol, not available on esp-idf 4.0.2; will be on 4.3
 static QueueHandle_t kbus_tx_queue; //TODO: See https://github.com/espressif/esp-idf/issues/4945 for details
 
+static void init_emulated_devs();
 static void kbus_rx_task();
 static void cdc_emulator(kbus_message_t rx_msg);
-static void sdrs_emulator(kbus_message_t rx_msg);
 static void tel_emulator(kbus_message_t rx_msg);
 static void mfl_handler(uint8_t mfl_cmd[2]);
 static void display_message(uint8_t cmd, uint8_t layout, uint8_t flags, char* text);
 static void display_fuzz_task();
-
-static inline void send_dev_ready(uint8_t source, uint8_t dest, bool startup);
 
 #ifdef QUEUE_DEBUG
 static void create_kbus_queue_watcher();
@@ -49,26 +48,33 @@ void init_kbus_service(QueueHandle_t bluetooth_queue) {
     kbus_rx_queue = xQueueCreate(8, sizeof(kbus_message_t));
     kbus_tx_queue = xQueueCreate(4, sizeof(kbus_message_t));
 
-    int tsk_ret = xTaskCreatePinnedToCore(kbus_rx_task, "kbus_rx", 8192, NULL, KBUS_TASK_PRIORITY, NULL, 1);
+    int tsk_ret = xTaskCreatePinnedToCore(kbus_rx_task, "kbus_rx", 4096, NULL, KBUS_TASK_PRIORITY, NULL, 1);
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "kbus_rx creation failed with: %d", tsk_ret);}
     init_kbus_uart_driver(kbus_rx_queue, kbus_tx_queue);
 
     // tsk_ret = xTaskCreatePinnedToCore(display_fuzz_task, "dsply_fuzz", 4096, NULL, KBUS_TASK_PRIORITY - 5, NULL, 1);
     // if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "dsply_tst creation failed with: %d", tsk_ret);}
 
+    tsk_ret = xTaskCreate(init_emulated_devs, "emus_init", 4096, NULL, KBUS_TASK_PRIORITY, NULL);
+    if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "emus_init creation failed with: %d", tsk_ret);}
+
 #ifdef QUEUE_DEBUG
     create_kbus_queue_watcher();
 #endif
-    
-    //? Make into one-off task? --------------------------------------------
-    // We're emulating SDRS, CDC and TEL, send a device startup announcement
-    vTaskDelay(SECONDS(5));
-    send_dev_ready(SDRS, LOC, true);
-    vTaskDelay(500);
-    // send_dev_ready(CDC, LOC, true);
-    // vTaskDelay(500);
+}
+
+static void init_emulated_devs() {
+    vTaskDelay(SECONDS(1));
+
+    sdrs_init_emulation(kbus_tx_queue);
+
+    vTaskDelay(50);
     send_dev_ready(TEL, LOC, true);
-    //? -------------------------------------------------------------------
+
+    // vTaskDelay(50);
+    // send_dev_ready(CDC, LOC, true);
+
+    vTaskDelete(NULL);
 }
 
 static void display_fuzz_task(){
@@ -94,7 +100,7 @@ static void display_fuzz_task(){
     vTaskDelete(NULL); // Delete task after going through all possible layouts...
 }
 
-static inline void send_dev_ready(uint8_t source, uint8_t dest, bool startup) {
+void send_dev_ready(uint8_t source, uint8_t dest, bool startup) {
     //* SOURCE -> DEST "Device Status Ready"
     kbus_message_t message = {
         .src = source,
@@ -152,7 +158,7 @@ static void kbus_rx_task() {
                 case SDRS:
                     ESP_LOGD(TAG, "Message for Sat Radio Received");
                     ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_DEBUG);
-                    sdrs_emulator(message);
+                    sdrs_enqueue_msg(&message, 50);
                     break;
 
                 // case CDC:
@@ -208,109 +214,6 @@ static void cdc_emulator(kbus_message_t rx_msg) {
         default:
             ESP_LOGD(TAG, "CDC Received Other Command:");
             ESP_LOG_BUFFER_HEXDUMP(TAG, rx_msg.body, rx_msg.body_len, ESP_LOG_DEBUG);
-            break;
-    }
-}
-
-static void sdrs_emulator(kbus_message_t rx_msg) {
-    kbus_message_t tx_msg = {   // SDRS -> SORUCE
-        .src = SDRS,
-        .dst = rx_msg.src,      // Address to sender of received msg
-    };
-
-    uint8_t cur_channel = 0x00, cur_bank = 0x00, cur_preset = 0x00;
-
-    // static inline 
-
-    switch(rx_msg.body[0]) {
-        case DEV_STAT_REQ:
-            ESP_LOGD(TAG, "SDRS Received: DEVICE STATUS REQUEST");
-            send_dev_ready(SDRS, rx_msg.src, false); // "Device Status Request" response "Device Status Ready"
-            ESP_LOGD(TAG, "SDRS Queued: DEVICE STATUS READY");
-            return;~
-        
-        case SDRS_CTRL_REQ: {
-
-            switch(rx_msg.body[1]) {
-
-                case 0x00:  //? Bootup command?
-                    ESP_LOGI(TAG, "SRDS Power On command received");
-                    break;
-                /**
-                 * ? Might indeed be a power/mode update command like documented at:
-                 * ? https://github.com/blalor/iPod_IBus_adapter/blob/f828d9327810512daa1dab1f9b7bb13dd9f80c21/doc/logs/log_analysis.txt#L9
-                 * 
-                 * ? Looks like it either confirms the SAT tuning on deactivatiohn, or this might be a
-                 * ? brief status update after SAT is no longer the source. Analyzing the logs, the two different
-                 * ? <3D 01 00> command messages recieved have matching channel && preset values as the regular
-                 * ? status update messages.
-                 * 
-                 * ? Type              Status Update            Sleep Status
-                 * ? Command             <3D 02 00>      <=>     <3D 01 00>
-                 * ? Response Body   3E 02 00 95 20 04   <=>   3E 00 00 95 20 04
-                 * !                          95 20 04                  95 20 04
-                 * !                     channel 149, preset bank 2, preset num 0
-                 * ?
-                 */
-                case 0x01:
-                    tx_msg.body[0] = SDRS_STAT_RPLY;
-                    tx_msg.body[1] = 0x00;  // Command 0x00
-                    tx_msg.body[2] = 0x00;  // Padding or flags?
-                    tx_msg.body[3] = 0x01;  // Current Channel
-                    tx_msg.body[4] = 0x11;  // Preset Bank && Preset number (each gets a nibble)
-                    tx_msg.body[5] = 0x04;  // ¯\_(ツ)_/¯   Some flag set on bit 2
-                    tx_msg.body_len = 6;
-                    xQueueSend(kbus_tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
-                   return;
-
-                case 0x02:  // Status Update Req. ("NOW" message)
-                case 0x03:  // Channel up
-                case 0x08:  // Preset recall to preset in rx_msg.body[2]
-                case 0x15:  // SAT pushed, change preset bank
-                    tx_msg.body[0] = SDRS_STAT_RPLY;
-                    tx_msg.body[1] = 0x02;  // Status Update
-                    tx_msg.body[2] = 0x00;  // Padding or flags?
-                    tx_msg.body[3] = 0x01;  // Current Channel
-                    tx_msg.body[4] = 0x11;  // Preset Bank && Preset number (each gets a nibble)
-                    tx_msg.body[5] = 0x04;  // ¯\_(ツ)_/¯   Some flag set on bit 2
-                    tx_msg.body_len = 14;
-
-                    memcpy(&tx_msg.body[6], "Station ", 9); // Channel Name Text
-                    xQueueSend(kbus_tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
-                    return;
-
-                case 0x0E:  // Artist Text Req.
-                    tx_msg.body[0] = SDRS_STAT_RPLY;
-                    tx_msg.body[1] = 0x01;  // Text Update
-                    tx_msg.body[2] = 0x06;  // Padding or flags? Artist flag?
-                    tx_msg.body[3] = 0x01;  // Current Channel
-                    tx_msg.body[4] = 0x01;  // Bank 0 && Preset 1 for Artist Text
-                    tx_msg.body[5] = 0x01;  // ¯\_(ツ)_/¯   Some flag set on bit 0
-                    tx_msg.body_len = 13;
-
-                    memcpy(&tx_msg.body[6], "Artist ", 8); // Artist Name Text
-                    xQueueSend(kbus_tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
-                    return;
-
-                case 0x0F:  // Song Text Req.
-                    tx_msg.body[0] = SDRS_STAT_RPLY;
-                    tx_msg.body[1] = 0x01;  // Text Update
-                    tx_msg.body[2] = 0x07;  // Padding or flags? Song flag?
-                    tx_msg.body[3] = 0x01;  // Channel
-                    tx_msg.body[4] = 0x01;  // Bank 0 && Preset 1 for Song Text
-                    tx_msg.body[5] = 0x01;  // ¯\_(ツ)_/¯   Some flag set on bit 0
-                    tx_msg.body_len = 11;
-
-                    memcpy(&tx_msg.body[6], "Song ", 6); // Song Name Text
-                    xQueueSend(kbus_tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
-                    return;
-
-                default:
-                    break;
-            }
-        }
-
-        default:
             break;
     }
 }

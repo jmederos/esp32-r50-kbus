@@ -151,6 +151,7 @@ static uint8_t decode_and_send_buffer(uint8_t* buffer, size_t event_size) {
     uint8_t drop_bitmask = 0x02;    // TODO: Configurable through init or function call
 
     size_t cur_byte = 0;
+    size_t end_byte = 0;
     kbus_message_t message;
     uint8_t msg_len = 0;
     uint8_t rx_checksum = 0;
@@ -166,11 +167,13 @@ static uint8_t decode_and_send_buffer(uint8_t* buffer, size_t event_size) {
         msg_len = buffer[cur_byte + 1];     // Keep msg_len locally for readability
         message.body_len = msg_len - 2;     // Only store body_len => passed message length - (dst_byte + chksum_byte)
         message.dst = buffer[cur_byte + 2]; // Store message dest address
-        cur_byte += 3;                      // Advance pointer to start of message bod
+        cur_byte += 3;                      // Advance pointer to start of message body
 
+        end_byte = cur_byte + message.body_len;
         // Likely an invalid message, it's asking us to go beyond event_size bounds
-        if((cur_byte + message.body_len) > event_size){
-            ESP_LOGD(TAG, "Message exceeds buffer: %d bytes, expected %d bytes maximum. Dropping...", cur_byte + message.body_len, event_size);
+        if(end_byte > event_size){
+            ESP_LOGD(TAG, "Message exceeds buffer: %d bytes, expected %d bytes maximum. Dropping...", end_byte, event_size);
+            ESP_LOG_BUFFER_HEXDUMP(TAG, buffer, event_size, ESP_LOG_VERBOSE);
             return messages_sent;   // Buffer would be exhausted, let's return what we sent
         }
 
@@ -182,8 +185,9 @@ static uint8_t decode_and_send_buffer(uint8_t* buffer, size_t event_size) {
         cal_checksum = calc_checksum(&message);
 
         if(rx_checksum == cal_checksum){
-            // Peek at command and see if we want it, else go onto the next one in the 
-            if((message.body[0] & drop_bitmask) && ((message.body[0] >> 4) & drop_bitmask)) {
+            // Peek at command and see if we want it. Make exception for MFL commands
+            // TODO: cleaner way of message filtering
+            if((message.body[0] & drop_bitmask) && ((message.body[0] >> 4) & drop_bitmask) && (message.src != 0x50)) {
                 ESP_LOGD(TAG, "Bitmask failed, dropping message...");
                 ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_DEBUG);
             } else {

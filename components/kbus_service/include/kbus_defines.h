@@ -114,6 +114,7 @@
 #define DSP_EQ_BUTT         0x34    //DSP Equalizer Button
 #define CD_CTRL_REQ         0x38    //CD Control Message
 #define CD_STAT_RPLY        0x39    //CD Status Reply
+#define MFL_BUTTON          0x3B
 #define SDRS_CTRL_REQ       0x3D    //SDRS Control Message
 #define SDRS_STAT_RPLY      0x3E    //SDRS Status Reply
 
