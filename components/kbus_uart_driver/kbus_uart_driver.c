@@ -37,7 +37,7 @@
 
 static const int RX_QUEUE_SIZE = 32;
 static const int RX_BUF_SIZE = 2048;
-static const int TX_BUF_SIZE = 512;
+static const int TX_BUF_SIZE = 1024;
 static const char* TAG = "kbus_driver";
 
 static QueueHandle_t kbus_rx_queue;
@@ -126,10 +126,10 @@ void init_kbus_uart_driver(QueueHandle_t rx_queue, QueueHandle_t tx_queue) {
  * @return `int` number of bytes `txBytes` written to UART
  */
 static int kbus_send_bytes(const char* logName, const char* bytes, uint8_t numBytes) {
-    ESP_LOGV(logName, "Writing %02x bytes to kbus", numBytes);
+    ESP_LOGV(logName, "Writing %d bytes to kbus", numBytes);
     const int txBytes = uart_write_bytes(DRIVER_UART, bytes, numBytes);
     uart_wait_tx_done(DRIVER_UART, (portTickType)portMAX_DELAY); // Block until all bytes are sent
-    ESP_LOGD(logName, "Wrote %02x bytes to kbus", txBytes);
+    ESP_LOGD(logName, "Wrote %d bytes to kbus", txBytes);
     return txBytes;
 }
 
@@ -144,7 +144,11 @@ static int kbus_send_bytes(const char* logName, const char* bytes, uint8_t numBy
  * @todo Setup as a task when streambuffers are available
  */
 static uint8_t decode_and_send_buffer(uint8_t* buffer, size_t event_size) {
+    static const char* TAG = "decode_buf";
     uint8_t messages_sent = 0;
+
+    // Drop messages that are responses (bit 1 of lower nibble) to commands in HMI && Media address space (bit 1 of upper nibble)
+    uint8_t drop_bitmask = 0x02;    // TODO: Configurable through init or function call
 
     size_t cur_byte = 0;
     kbus_message_t message;
@@ -153,7 +157,7 @@ static uint8_t decode_and_send_buffer(uint8_t* buffer, size_t event_size) {
     uint8_t cal_checksum = 0;
 
     if(event_size < 5) { //Don't bother decoding, less bytes than smallest valid kbus message.
-        ESP_LOGW("decode_buf", "Less than 5 bytes in buffer!");
+        ESP_LOGW(TAG, "Less than 5 bytes in buffer, dropping message...");
         return messages_sent;
     }
 
@@ -162,24 +166,36 @@ static uint8_t decode_and_send_buffer(uint8_t* buffer, size_t event_size) {
         msg_len = buffer[cur_byte + 1];     // Keep msg_len locally for readability
         message.body_len = msg_len - 2;     // Only store body_len => passed message length - (dst_byte + chksum_byte)
         message.dst = buffer[cur_byte + 2]; // Store message dest address
+        cur_byte += 3;                      // Advance pointer to start of message bod
 
-        cur_byte += 3;                      // Advance pointer to start of message body
+        // Likely an invalid message, it's asking us to go beyond event_size bounds
+        if((cur_byte + message.body_len) > event_size){
+            ESP_LOGD(TAG, "Message exceeds buffer: %d bytes, expected %d bytes maximum. Dropping...", cur_byte + message.body_len, event_size);
+            return messages_sent;   // Buffer would be exhausted, let's return what we sent
+        }
+
         memcpy(message.body, buffer + cur_byte, message.body_len); // Copy message body to struct
 
         cur_byte += (message.body_len);     // Advance pointer to checksum byte
         rx_checksum = buffer[cur_byte];     // Keep for comparision to calculated value
 
         cal_checksum = calc_checksum(&message);
+
         if(rx_checksum == cal_checksum){
-            ESP_LOG_BUFFER_HEXDUMP("decode_buf", message.body, message.body_len, ESP_LOG_DEBUG);
-            xQueueSend(kbus_rx_queue, &message, (portTickType)portMAX_DELAY);
-            messages_sent++;
+            // Peek at command and see if we want it, else go onto the next one in the 
+            if((message.body[0] & drop_bitmask) && ((message.body[0] >> 4) & drop_bitmask)) {
+                ESP_LOGD(TAG, "Bitmask failed, dropping message...");
+                ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_DEBUG);
+            } else {
+                ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_DEBUG);
+                xQueueSend(kbus_rx_queue, &message, (portTickType)portMAX_DELAY);
+                messages_sent++;
+            }
         } else {
-            ESP_LOGD("decode_buf", "Checksum mismatch!");
-            ESP_LOGD("decode_buf", "rx_chk: 0x%02x\tcal_chk: 0x%02x", rx_checksum, cal_checksum);
-            ESP_LOGD("decode_buf", "0x%02x -> 0x%02x\t0x%02x bytes\t0x%02x", message.src, message.dst, msg_len, message.body[0]);
-            ESP_LOG_BUFFER_HEXDUMP("decode_buf", buffer, event_size, ESP_LOG_DEBUG);
-            ESP_LOGD("decode_buf", "cur_byte: %d\t event_size: %d", cur_byte, event_size);
+            ESP_LOGW(TAG, "Checksum mismatch\trx_chk: 0x%02x\tcal_chk: 0x%02x", rx_checksum, cal_checksum);
+            ESP_LOGD(TAG, "0x%02x -> 0x%02x\t0x%02x bytes\t0x%02x", message.src, message.dst, msg_len, message.body[0]);
+            ESP_LOGD(TAG, "Buffer index: %d/%d", cur_byte, event_size);
+            ESP_LOG_BUFFER_HEXDUMP(TAG, buffer, event_size, ESP_LOG_VERBOSE);
         }
     } while(cur_byte < event_size);
 
