@@ -21,6 +21,18 @@
 #define SDRS_UPDATE_TXT     0x01
 #define SDRS_CHAN_DN_ACK    0x03
 
-void sdrs_init_emulation(QueueHandle_t kbus_tx_queue);
+typedef struct {
+    char chan_disp[256];
+    char artist_disp[64];
+    char song_disp[64];
+    char esn_disp[32];
+
+    uint8_t chan_len;
+    uint8_t song_len;
+    uint8_t artist_len;
+    uint8_t esn_len;
+} sdrs_display_buf_t;
+
+void sdrs_init_emulation(QueueHandle_t kbus_tx_queue, sdrs_display_buf_t* display_buffer);
 uint8_t sdrs_enqueue_msg(void* message, TickType_t ticksToWait);
 #endif //SDRS_EMULATOR_H

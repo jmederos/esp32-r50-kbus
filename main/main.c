@@ -66,7 +66,7 @@
 // #define TASK_DEBUG
 
 static const char* TAG = "r50-main";
-static QueueHandle_t bt_cmd_queue;
+static QueueHandle_t bt_cmd_queue, bt_info_queue;
 
 #ifdef TASK_DEBUG
 static void watcher_task(){
@@ -120,9 +120,11 @@ int app_main(void){
 
     // Setup bluetooth command queue
     bt_cmd_queue = xQueueCreate(4, sizeof(bt_cmd_type_t));
+    // Setup bluetooth "now playing" queue w/250 byte slots
+    bt_info_queue = xQueueCreate(2, 250);
 
     // Setup kbus service; has side-effect of initializing and starting UART driver.
-    init_kbus_service(bt_cmd_queue);
+    init_kbus_service(bt_cmd_queue, bt_info_queue);
 
 #ifdef R50_WIFI_ENABLED // Gating wifi and bt since there's still issues with them running concurrently.
     wifi_init_softap();

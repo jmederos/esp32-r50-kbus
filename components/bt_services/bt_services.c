@@ -12,9 +12,9 @@
 #include "btstack_port_esp32.h"
 
 #include "bt_services.h"
-#include "avrcp_control.h"
+#include "avrcp_control_driver.h"
 
-#include "bt_commands.h"
+#include "bt_common.h"
 
 #define SECONDS(sec) ((sec*1000) / portTICK_RATE_MS)
 
@@ -30,13 +30,14 @@
 
 static const char* TAG = "bt-services";
 static QueueHandle_t bt_cmd_queue;
-static TaskHandle_t bt_autocxn_task;
+static QueueHandle_t bt_info_queue;
+static TaskHandle_t avrcp_notification_task;
 
 static void setup_cmd_task();
 static void bt_cmd_task();
 
-static void setup_autoconnect_task();
-static void bt_autoconnect_task();
+static void setup_notify_task();
+static void avrcp_notify_task();
 
 int bluetooth_services_setup(QueueHandle_t bluetooth_queue){    
     // optional: enable packet logger
@@ -51,14 +52,14 @@ int bluetooth_services_setup(QueueHandle_t bluetooth_queue){
     sdp_init();
 
 #if SHOULD_AUTOCONNECT
-    setup_autoconnect_task();
-    // Setup avrcp ↙↙↙announce_str  ↙↙↙autoconnect device address
-    avrcp_setup_with_autoconnect(ANNOUNCE_STR, AUTOCONNECT_ADDR, bt_autocxn_task); //TODO: store in NVS for dynamic configuration w/web server
+    setup_notify_task();
+    //                Setup avrcp ↙↙↙announce_str  ↙↙↙autoconnect device address
+    avrcp_setup_with_notify(ANNOUNCE_STR, AUTOCONNECT_ADDR, avrcp_notification_task); //TODO: store in NVS for dynamic configuration w/web server
 #else      
     // Setup avrcp ↙↙↙announce_str  ↙↙↙autoconnect device address
     avrcp_setup(ANNOUNCE_STR); //TODO: store in NVS for dynamic configuration w/web server
 #endif
-    
+
     // Setup bt command handler
     bt_cmd_queue = bluetooth_queue;
     setup_cmd_task();
@@ -71,12 +72,12 @@ int bluetooth_services_setup(QueueHandle_t bluetooth_queue){
     return 0;
 }
 
-static void setup_autoconnect_task() {
-    int tsk_ret = xTaskCreatePinnedToCore(bt_autoconnect_task, "bt_auto_con", 4096, NULL, AUTOCON_TASK_PRIORITY, &bt_autocxn_task, 0);
+static void setup_notify_task() {
+    int tsk_ret = xTaskCreatePinnedToCore(avrcp_notify_task, "bt_auto_con", 4096, NULL, AUTOCON_TASK_PRIORITY, &avrcp_notification_task, 0);
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "bt_auto_con creation failed with: %d", tsk_ret);}
 }
 
-static void bt_autoconnect_task() {
+static void avrcp_notify_task() {
     static const char* TASK_TAG = "bt_auto_con";
     uint32_t avrcp_status = 0;
     uint16_t retry_delay = 1;
@@ -87,7 +88,7 @@ static void bt_autoconnect_task() {
 
     while(1) {
         ESP_LOGD(TASK_TAG, "Waiting for AVRCP Notification...");
-        xTaskNotifyWait(0x00000000, 0x00000000, &avrcp_status, portMAX_DELAY);
+        xTaskNotifyWait(0x00000000, 0x00000004, &avrcp_status, portMAX_DELAY);
 
         ESP_LOGD(TASK_TAG, "Notification Receieved 0x%08x", avrcp_status);
 
@@ -101,7 +102,7 @@ static void bt_autoconnect_task() {
                 retry_delay = 1;
 
                 ESP_LOGI(TASK_TAG, "Successfully connected to %s", AUTOCONNECT_ADDR);
-            } else if(cxn_attempt_count < MAX_CONN_RETRIES) { // Otherwise, connected flag is unset; let's check cxn_attempts and retry.
+            } else if((cxn_attempt_count < MAX_CONN_RETRIES)) { // Otherwise, connected flag is unset; let's check cxn_attempts and retry.
 
                 ESP_LOGI(TASK_TAG, "Attempting bt autoconnect: %02d/%02d", cxn_attempt_count + 1, MAX_CONN_RETRIES);
                 
@@ -111,6 +112,11 @@ static void bt_autoconnect_task() {
 
                 // Every 3 connection attempts increase delay
                 if((cxn_attempt_count % 3) == 0) retry_delay = (retry_delay * retry_delay) + 1;
+            }
+
+            if(avrcp_status & 0x04) {   // Track changed, request "now playing" data update
+                ESP_LOGI(TASK_TAG, "Track Changed...");
+                avrcp_req_now_playing();
             }
         }
     }
@@ -197,7 +203,7 @@ static void bt_cmd_task() {
                     break;
                 case AVRCP_GET_INFO:
                 ESP_LOGD(TAG, "AVRCP Requesting Track Info");
-                    if(avrcp_get_now_playing() != ERROR_CODE_SUCCESS) {
+                    if(avrcp_req_now_playing() != ERROR_CODE_SUCCESS) {
                         ESP_LOGE(TAG, "AVRCP RWD command error");
                     }
                     break;

@@ -16,7 +16,7 @@
 #include "kbus_uart_driver.h"
 #include "kbus_service.h"
 #include "kbus_defines.h"
-#include "bt_commands.h"
+#include "bt_common.h"
 #include "sdrs_emulator.h"
 
 // ! Debug Flags
@@ -28,8 +28,11 @@
 
 static const char* TAG = "kbus_service";
 static QueueHandle_t bt_cmd_queue;
+static QueueHandle_t bt_info_queue;
 static QueueHandle_t kbus_rx_queue; //TODO: Message Buffer instead of Queue... lol, not available on esp-idf 4.0.2; will be on 4.3
 static QueueHandle_t kbus_tx_queue; //TODO: See https://github.com/espressif/esp-idf/issues/4945 for details
+
+static sdrs_display_buf_t* sdrs_display_buf = NULL;
 
 static void init_emulated_devs();
 static void kbus_rx_task();
@@ -43,8 +46,9 @@ static void display_fuzz_task();
 static void create_kbus_queue_watcher();
 #endif
 
-void init_kbus_service(QueueHandle_t bluetooth_queue) {
-    bt_cmd_queue = bluetooth_queue;
+void init_kbus_service(QueueHandle_t bt_command_q, QueueHandle_t bt_track_info_q) {
+    bt_cmd_queue = bt_command_q;
+    bt_info_queue = bt_track_info_q;
     kbus_rx_queue = xQueueCreate(8, sizeof(kbus_message_t));
     kbus_tx_queue = xQueueCreate(4, sizeof(kbus_message_t));
 
@@ -66,7 +70,8 @@ void init_kbus_service(QueueHandle_t bluetooth_queue) {
 static void init_emulated_devs() {
     vTaskDelay(SECONDS(1));
 
-    sdrs_init_emulation(kbus_tx_queue);
+    sdrs_display_buf = (sdrs_display_buf_t*) malloc(sizeof(sdrs_display_buf_t));
+    sdrs_init_emulation(kbus_tx_queue, sdrs_display_buf);
 
     vTaskDelay(50);
     send_dev_ready(TEL, LOC, true);

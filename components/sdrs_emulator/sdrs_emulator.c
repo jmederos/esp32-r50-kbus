@@ -29,14 +29,17 @@ static QueueHandle_t tx_queue;
 static uint8_t cur_channel = 0xaf, cur_bank = 0x00, cur_preset = 0x00;
 static const char* cur_chan_str = "Grogu 1";
 
+static sdrs_display_buf_t* chan_display_buf = NULL;
+
 static inline uint8_t bank_preset_byte() { return (cur_bank << 4) | cur_preset; }
 
 static void emu_task();
 
-void sdrs_init_emulation(QueueHandle_t kbus_tx_queue) {
-    
+void sdrs_init_emulation(QueueHandle_t kbus_tx_queue, sdrs_display_buf_t* display_buffer){
+    // Own queue for SDRS messages, don't want to have multiple readers on the main kbus rx queue
     rx_queue = xQueueCreate(4, sizeof(kbus_message_t));
     tx_queue = kbus_tx_queue;
+    chan_display_buf = display_buffer;
 
     int tsk_ret = xTaskCreatePinnedToCore(emu_task, "sdrs_emu", 4096, NULL, EMU_TASK_PRIORITY, NULL, 1);
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "sdrs_emu creation failed with: %d", tsk_ret);}
