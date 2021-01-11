@@ -64,7 +64,7 @@ _Note: Helper scripts in tools folder assume a WSL Ubuntu install w/ESP32 on Win
 
 * Use OEM CD changer pre-wiring in R50 behind right side panel in trunk.
 
-#### Reference
+#### R50 Support Docs
 * [How to find pre-wiring](https://www.northamericanmotoring.com/forums/navigation-and-audio/224408-can-t-find-cd-changer-pre-wiring.html)
 * [CD changer installation instructions](https://new.minimania.com/images/instructions/OEM%20CD%20Changer.pdf)
 
@@ -73,13 +73,16 @@ _Note: Helper scripts in tools folder assume a WSL Ubuntu install w/ESP32 on Win
 | --- | --- | --- |
 | Software POC: control phone via AVRCP w/o A2DP advertised. | 👌 | _Although part of the BT spec, example implementations on AVRCP-only are hard to come by._ |
 | Hardware POC: acquire + test k-line transceivers. | 🙌 |   |
-| K-bus proof concept, pickup MFL messages. | 👍 | _Have yet to test in vehicle, works in mockup w/Navcoder + iPhone streaming to a BT headphone amp._ |
+| K-bus proof concept, pickup MFL messages. | 👍 | _Works in vehicle, works in mockup w/Navcoder + iPhone streaming to a BT headphone amp._ |
+| Write to radio head unit display | 🥳 | _Seems to work, now let's do scrolling display_ |
 | [AMS](https://developer.apple.com/library/archive/documentation/CoreBluetooth/Reference/AppleMediaService_Reference/Specification/Specification.html) instead of AVRCP |   | _Didn't know this was a thing, seems like a better bet; btstack + esp-idf is a little clunky._ |
-| Write to radio head unit display |   |   |
 | [ANCS](https://developer.apple.com/library/archive/documentation/CoreBluetooth/Reference/AppleNotificationCenterServiceSpecification/Introduction/Introduction.html) Support & update radio display w/push notification | 🤞 |   |
-| ~~i2s DAC for fully integrated solution?...~~|  | _nah... AMS + existing FiiO DAC is better._ |
 
 _See the [open issues](https://github.com/jmederos/esp32-r50-kbus/issues) for a list of proposed features (and known issues)._
+
+## References
+* [iPod ↔ Sirius IBus adapter](https://github.com/blalor/iPod_IBus_adapter) - _Referenced for SDRS packet logs (my car isn't equiped with one.)_
+* [Hack The IBus](http://web.archive.org/web/20110320205413/http://ibus.stuge.se/Main_Page)
 
 ## License
 

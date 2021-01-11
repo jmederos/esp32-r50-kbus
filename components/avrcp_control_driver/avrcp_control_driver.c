@@ -278,9 +278,6 @@ static void avrcp_controller_packet_handler(uint8_t packet_type, uint16_t channe
             ESP_LOGD(TAG, "packet_type: 0x%02x\t\tchannel: %d\tsize: %d\tpacket_addr: %x", packet_type, channel, size, (int)packet);
             ESP_LOG_BUFFER_HEXDUMP(TAG, packet, 16, ESP_LOG_DEBUG);
             if(bt_service_task != NULL) xTaskNotify(bt_service_task, 0x04, eSetBits);
-            // uint8_t got_cid = avrcp_subevent_notification_track_changed_get_avrcp_cid(packet);
-            // uint8_t got_cmd_type = avrcp_subevent_notification_track_changed_get_command_type(packet);
-            // ESP_LOGD(TAG, "Track Changed cid: 0x%02x  cmd_type: 0x%02x", got_cid, got_cmd_type);
             return;
         case AVRCP_SUBEVENT_NOTIFICATION_VOLUME_CHANGED:
             ESP_LOGD(TAG, "AVRCP Controller: Absolute volume changed %d", avrcp_subevent_notification_volume_changed_get_absolute_volume(packet));

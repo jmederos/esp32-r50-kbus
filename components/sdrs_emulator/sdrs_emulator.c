@@ -147,7 +147,7 @@ static void emu_task() {
                             tx_msg.body[4] = bank_preset_byte();    // Preset Bank && Preset number (each gets a nibble)
                             tx_msg.body[5] = 0x04;                  // ¯\_(ツ)_/¯   Some flag set on bit 2
                             tx_msg.body_len = 6 + strlen(display_buf->chan_disp);
-                            
+
                             memcpy(&tx_msg.body[6], display_buf->chan_disp, strlen(display_buf->chan_disp)); // Channel Name Text
                             xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
                             break;

@@ -57,9 +57,6 @@ void init_kbus_service(QueueHandle_t bt_command_q, QueueHandle_t bt_track_info_q
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "kbus_rx creation failed with: %d", tsk_ret);}
     init_kbus_uart_driver(kbus_rx_queue, kbus_tx_queue);
 
-    // tsk_ret = xTaskCreatePinnedToCore(display_fuzz_task, "dsply_fuzz", 4096, NULL, KBUS_TASK_PRIORITY - 5, NULL, 1);
-    // if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "dsply_tst creation failed with: %d", tsk_ret);}
-
     tsk_ret = xTaskCreate(init_emulated_devs, "emus_init", 4096, NULL, KBUS_TASK_PRIORITY+1, NULL);
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "emus_init creation failed with: %d", tsk_ret);}
 
@@ -84,42 +81,6 @@ static void init_emulated_devs() {
     // send_dev_ready(CDC, LOC, true);
 
     vTaskDelete(NULL);
-}
-
-static void display_fuzz_task() {
-    #define DSPLY_LAYOUT_DELAY 1
-    uint8_t display_layout = 0x00;
-    char layout_message[32];
-
-    vTaskDelay(SECONDS(80));
-
-    while(display_layout < 0xff){
-        sprintf(layout_message, "x23 layout 0x%02x", display_layout);
-        display_message(0x23, display_layout, 0x30, layout_message);
-
-        vTaskDelay(SECONDS(2));
-
-        sprintf(layout_message, "x24 layout 0x%02x", display_layout);
-        display_message(0x24, display_layout, 0x30, layout_message);
-
-        display_layout++;
-        vTaskDelay(SECONDS(DSPLY_LAYOUT_DELAY));
-    }
-
-    vTaskDelete(NULL); // Delete task after going through all possible layouts...
-}
-
-static void bt_info_task() {
-    bt_now_playing_info_t info;
-
-    while(1) {
-        if(xQueueReceive(bt_info_queue, (void *)&info, (portTickType)portMAX_DELAY)) {
-            strcpy(sdrs_display_buf->chan_disp, "Spotify");
-            strcpy(sdrs_display_buf->artist_disp, info.artist_name);
-            strcpy(sdrs_display_buf->song_disp, info.track_title);
-        }
-    }
-    vTaskDelete(NULL); // In case we leave the loop, to avoid a panic
 }
 
 void send_dev_ready(uint8_t source, uint8_t dest, bool startup) {
@@ -170,6 +131,7 @@ static void kbus_rx_task() {
                     // If ignition is set to Pos1_ACC, send device startup packet
                     if(message.body_len == 2 && message.body[0] == IGN_STAT_RPLY && message.body[1] == 0x03) {
                         ESP_LOGI(TAG, "Ignition On...");
+                        // TODO: Need to guarantee it's only emitted once before requesting media begin playing
                     //     // Send AVRCP_PLAY command when ignition_status bits set to: Pos1_Acc Pos2_On
                     //     bt_cmd_type_t bt_command = AVRCP_PLAY;
                     //     xQueueSend(bt_cmd_queue, &bt_command, (portTickType)portMAX_DELAY);
@@ -205,7 +167,7 @@ static void kbus_rx_task() {
     vTaskDelete(NULL); // In case we leave the loop, to avoid a panic
 }
 
-static void cdc_emulator(kbus_message_t rx_msg) {
+static void cdc_emulator(kbus_message_t rx_msg) {   //? Own component like SDRS?...
     //* CD Changer Messages from http://web.archive.org/web/20110320053244/http://ibus.stuge.se/CD_Changer
     kbus_message_t tx_msg = {   // CDC -> SORUCE
         .src = CDC,
@@ -379,18 +341,6 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
         ESP_LOGD(TAG, "Sending BT Command 0x%02x", bt_command);
         xQueueSend(bt_cmd_queue, &bt_command, (portTickType)portMAX_DELAY);
     }
-}
-
-static void display_message(uint8_t cmd, uint8_t layout, uint8_t flags, char* text) {
-    kbus_message_t message = {
-        .src = RAD,
-        .dst = LOC,
-        .body = {cmd, layout, flags},
-        .body_len = 18
-    };
-
-    memcpy(&message.body[3], text, message.body_len - 1);
-    xQueueSend(kbus_tx_queue, &message, (portTickType)portMAX_DELAY);
 }
 
 #ifdef QUEUE_DEBUG
