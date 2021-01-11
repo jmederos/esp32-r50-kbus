@@ -6,7 +6,7 @@
 
 /* Setup AVRCP service */
 int avrcp_setup(char* announce_str);
-int avrcp_setup_with_notify(char* announce_str, char* cxn_address, TaskHandle_t service_task);
+int avrcp_setup_with_addr_and_notify(char* announce_str, char* cxn_address, TaskHandle_t service_task);
 
 uint8_t avrcp_ctl_connect();
 
@@ -30,12 +30,13 @@ uint8_t avrcp_ctl_end_long_press();
 
 uint8_t avrcp_req_now_playing();
 
-char* avrcp_get_title_str();
-char* avrcp_get_album_str();
+// Returns pointer to current info strings
 char* avrcp_get_track_str();
+char* avrcp_get_album_str();
+char* avrcp_get_artist_str();
 
 // Returns current track in upper byte, total tracks in lower byte
 uint16_t avrcp_get_track_info();
-uint16_t avrcp_get_track_len_ms();
+uint32_t avrcp_get_track_len_ms();
 
 #endif // AVRCP_CONTROL_DRIVER_H

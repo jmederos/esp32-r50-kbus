@@ -1,3 +1,34 @@
+/*
+ * Copyright (C) 2020 BlueKitchen GmbH
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holders nor the names of
+ *    contributors may be used to endorse or promote products derived
+ *    from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY MATTHIAS RINGWALD AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL MATTHIAS
+ * RINGWALD OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
+ * OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+ * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ */
+
 #include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -30,15 +61,23 @@ static uint16_t avrcp_cid = 0;
 static bool     avrcp_connected = false;
 static uint8_t  avrcp_subevent_value[100];
 
+// Now Playing Info
+static char track_str[256];
+static char artist_str[256];
+static char album_str[256];
+static uint32_t track_len_ms = 0;
+static uint8_t track_no = 0;
+static uint8_t total_tracks = 0;
+
 /* Setup AVRCP service */
 static void avrcp_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
 static void avrcp_controller_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
 
 int avrcp_setup(char* announce_str) {
-    return avrcp_setup_with_notify(announce_str, "00:00:00:00:00:00", NULL);
+    return avrcp_setup_with_addr_and_notify(announce_str, "00:00:00:00:00:00", NULL);
 }
 
-int avrcp_setup_with_notify(char* announce_str, char* cxn_address, TaskHandle_t service_task){
+int avrcp_setup_with_addr_and_notify(char* announce_str, char* cxn_address, TaskHandle_t service_task){
     bt_service_task = service_task;
     
     // Initialize AVRCP service
@@ -124,6 +163,27 @@ uint8_t avrcp_ctl_end_long_press() {
 
 uint8_t avrcp_req_now_playing() {
     return avrcp_controller_get_now_playing_info(avrcp_cid);
+}
+
+char* avrcp_get_track_str() {
+    return track_str;
+}
+char* avrcp_get_album_str() {
+    return album_str;
+}
+char* avrcp_get_artist_str() {
+    return artist_str;
+}
+
+uint16_t avrcp_get_track_info(){
+    uint16_t track_info = 0x0000;
+    track_info ^= track_no;
+    track_info = track_info << 8;
+    track_info ^= total_tracks;
+    return track_info;
+}
+uint32_t avrcp_get_track_len_ms(){
+    return track_len_ms;
 }
 
 static void avrcp_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size){
@@ -235,31 +295,36 @@ static void avrcp_controller_packet_handler(uint8_t packet_type, uint16_t channe
             break;
         }
         case AVRCP_SUBEVENT_NOW_PLAYING_TRACK_INFO:
-            ESP_LOGD(TAG, "AVRCP Controller:     Track: %d", avrcp_subevent_now_playing_track_info_get_track(packet));
+            track_no = avrcp_subevent_now_playing_track_info_get_track(packet);
+            ESP_LOGD(TAG, "AVRCP Controller:     Track: %d", track_no);
             break;
 
         case AVRCP_SUBEVENT_NOW_PLAYING_TOTAL_TRACKS_INFO:
-            ESP_LOGD(TAG, "AVRCP Controller:     Total Tracks: %d", avrcp_subevent_now_playing_total_tracks_info_get_total_tracks(packet));
+            total_tracks = avrcp_subevent_now_playing_total_tracks_info_get_total_tracks(packet);
+            ESP_LOGD(TAG, "AVRCP Controller:     Total Tracks: %d", total_tracks);
             break;
 
         case AVRCP_SUBEVENT_NOW_PLAYING_TITLE_INFO:
             if (avrcp_subevent_now_playing_title_info_get_value_len(packet) > 0){
-                memcpy(avrcp_subevent_value, avrcp_subevent_now_playing_title_info_get_value(packet), avrcp_subevent_now_playing_title_info_get_value_len(packet));
-                ESP_LOGD(TAG, "AVRCP Controller:     Title: %s", avrcp_subevent_value);
+                bzero(track_str, sizeof(track_str));
+                memcpy(track_str, avrcp_subevent_now_playing_title_info_get_value(packet), avrcp_subevent_now_playing_title_info_get_value_len(packet));
+                ESP_LOGD(TAG, "AVRCP Controller:     Title: %s", track_str);
             }  
             break;
 
         case AVRCP_SUBEVENT_NOW_PLAYING_ARTIST_INFO:
             if (avrcp_subevent_now_playing_artist_info_get_value_len(packet) > 0){
-                memcpy(avrcp_subevent_value, avrcp_subevent_now_playing_artist_info_get_value(packet), avrcp_subevent_now_playing_artist_info_get_value_len(packet));
-                ESP_LOGD(TAG, "AVRCP Controller:     Artist: %s", avrcp_subevent_value);
+                bzero(artist_str, sizeof(artist_str));
+                memcpy(artist_str, avrcp_subevent_now_playing_artist_info_get_value(packet), avrcp_subevent_now_playing_artist_info_get_value_len(packet));
+                ESP_LOGD(TAG, "AVRCP Controller:     Artist: %s", artist_str);
             }  
             break;
         
         case AVRCP_SUBEVENT_NOW_PLAYING_ALBUM_INFO:
             if (avrcp_subevent_now_playing_album_info_get_value_len(packet) > 0){
-                memcpy(avrcp_subevent_value, avrcp_subevent_now_playing_album_info_get_value(packet), avrcp_subevent_now_playing_album_info_get_value_len(packet));
-                ESP_LOGD(TAG, "AVRCP Controller:     Album: %s", avrcp_subevent_value);
+                bzero(album_str, sizeof(album_str));
+                memcpy(album_str, avrcp_subevent_now_playing_album_info_get_value(packet), avrcp_subevent_now_playing_album_info_get_value_len(packet));
+                ESP_LOGD(TAG, "AVRCP Controller:     Album: %s", album_str);
             }  
             break;
         
@@ -271,12 +336,16 @@ static void avrcp_controller_packet_handler(uint8_t packet_type, uint16_t channe
             break;
 
         case AVRCP_SUBEVENT_NOW_PLAYING_SONG_LENGTH_MS_INFO:
-            ESP_LOGD(TAG, "AVRCP Controller:     Length: %"PRIu32" ms", avrcp_subevent_now_playing_song_length_ms_info_get_song_length(packet));
+            track_len_ms = avrcp_subevent_now_playing_song_length_ms_info_get_song_length(packet);
+            ESP_LOGD(TAG, "AVRCP Controller:     Length: %"PRIu32" ms", track_len_ms);
+            // In testing, this is consistently the last packet of info parsed, so let's notify bt_task to pull new data.
+            if(bt_service_task != NULL) xTaskNotify(bt_service_task, 0x08, eSetBits);
             break;
         
         case AVRCP_SUBEVENT_PLAY_STATUS:
+            track_len_ms = avrcp_subevent_play_status_get_song_length(packet);
             ESP_LOGD(TAG, "AVRCP Controller: Song length %"PRIu32" ms, Song position %"PRIu32" ms, Play status %s", 
-                avrcp_subevent_play_status_get_song_length(packet), 
+                track_len_ms, 
                 avrcp_subevent_play_status_get_song_position(packet),
                 avrcp_play_status2str(avrcp_subevent_play_status_get_play_status(packet)));
             break;

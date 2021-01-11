@@ -41,6 +41,7 @@ static void tel_emulator(kbus_message_t rx_msg);
 static void mfl_handler(uint8_t mfl_cmd[2]);
 static void display_message(uint8_t cmd, uint8_t layout, uint8_t flags, char* text);
 static void display_fuzz_task();
+static void bt_info_task();
 
 #ifdef QUEUE_DEBUG
 static void create_kbus_queue_watcher();
@@ -59,8 +60,11 @@ void init_kbus_service(QueueHandle_t bt_command_q, QueueHandle_t bt_track_info_q
     // tsk_ret = xTaskCreatePinnedToCore(display_fuzz_task, "dsply_fuzz", 4096, NULL, KBUS_TASK_PRIORITY - 5, NULL, 1);
     // if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "dsply_tst creation failed with: %d", tsk_ret);}
 
-    tsk_ret = xTaskCreate(init_emulated_devs, "emus_init", 4096, NULL, KBUS_TASK_PRIORITY, NULL);
+    tsk_ret = xTaskCreate(init_emulated_devs, "emus_init", 4096, NULL, KBUS_TASK_PRIORITY+1, NULL);
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "emus_init creation failed with: %d", tsk_ret);}
+
+    tsk_ret = xTaskCreate(bt_info_task, "bt_trk_info", 4096, NULL, KBUS_TASK_PRIORITY-2, NULL);
+    if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "bt_trk_info creation failed with: %d", tsk_ret);}
 
 #ifdef QUEUE_DEBUG
     create_kbus_queue_watcher();
@@ -82,7 +86,7 @@ static void init_emulated_devs() {
     vTaskDelete(NULL);
 }
 
-static void display_fuzz_task(){
+static void display_fuzz_task() {
     #define DSPLY_LAYOUT_DELAY 1
     uint8_t display_layout = 0x00;
     char layout_message[32];
@@ -103,6 +107,19 @@ static void display_fuzz_task(){
     }
 
     vTaskDelete(NULL); // Delete task after going through all possible layouts...
+}
+
+static void bt_info_task() {
+    bt_now_playing_info_t info;
+
+    while(1) {
+        if(xQueueReceive(bt_info_queue, (void *)&info, (portTickType)portMAX_DELAY)) {
+            strcpy(sdrs_display_buf->chan_disp, "Spotify");
+            strcpy(sdrs_display_buf->artist_disp, info.artist_name);
+            strcpy(sdrs_display_buf->song_disp, info.track_title);
+        }
+    }
+    vTaskDelete(NULL); // In case we leave the loop, to avoid a panic
 }
 
 void send_dev_ready(uint8_t source, uint8_t dest, bool startup) {
@@ -185,6 +202,7 @@ static void kbus_rx_task() {
             xQueueReset(kbus_rx_queue); // flush queue
         }
     }
+    vTaskDelete(NULL); // In case we leave the loop, to avoid a panic
 }
 
 static void cdc_emulator(kbus_message_t rx_msg) {
@@ -363,7 +381,7 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
     }
 }
 
-static void display_message(uint8_t cmd, uint8_t layout, uint8_t flags, char* text){
+static void display_message(uint8_t cmd, uint8_t layout, uint8_t flags, char* text) {
     kbus_message_t message = {
         .src = RAD,
         .dst = LOC,

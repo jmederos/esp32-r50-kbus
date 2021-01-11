@@ -33,13 +33,15 @@ static QueueHandle_t bt_cmd_queue;
 static QueueHandle_t bt_info_queue;
 static TaskHandle_t avrcp_notification_task;
 
+static bt_now_playing_info_t cur_track_info;
+
 static void setup_cmd_task();
 static void bt_cmd_task();
 
 static void setup_notify_task();
 static void avrcp_notify_task();
 
-int bluetooth_services_setup(QueueHandle_t bluetooth_queue){    
+int bluetooth_services_setup(QueueHandle_t command_queue, QueueHandle_t info_queue) {
     // optional: enable packet logger
     // hci_dump_open(NULL, HCI_DUMP_STDOUT);
 
@@ -53,16 +55,18 @@ int bluetooth_services_setup(QueueHandle_t bluetooth_queue){
 
 #if SHOULD_AUTOCONNECT
     setup_notify_task();
-    //                Setup avrcp ↙↙↙announce_str  ↙↙↙autoconnect device address
-    avrcp_setup_with_notify(ANNOUNCE_STR, AUTOCONNECT_ADDR, avrcp_notification_task); //TODO: store in NVS for dynamic configuration w/web server
+    //                                  Setup avrcp ↙↙↙announce_str  ↙↙↙autoconnect device address
+    avrcp_setup_with_addr_and_notify(ANNOUNCE_STR, AUTOCONNECT_ADDR, avrcp_notification_task); //TODO: store in NVS for dynamic configuration w/web server
 #else      
-    // Setup avrcp ↙↙↙announce_str  ↙↙↙autoconnect device address
+    // Setup avrcp ↙↙↙announce_str
     avrcp_setup(ANNOUNCE_STR); //TODO: store in NVS for dynamic configuration w/web server
 #endif
 
     // Setup bt command handler
-    bt_cmd_queue = bluetooth_queue;
+    bt_cmd_queue = command_queue;
     setup_cmd_task();
+
+    bt_info_queue = info_queue;
 
     // Turn on bluetooth
     ESP_LOGI(TAG, "Bluetooth HCI on");
@@ -88,7 +92,7 @@ static void avrcp_notify_task() {
 
     while(1) {
         ESP_LOGD(TASK_TAG, "Waiting for AVRCP Notification...");
-        xTaskNotifyWait(0x00000000, 0x00000004, &avrcp_status, portMAX_DELAY);
+        xTaskNotifyWait(0x00000000, 0x0000000C, &avrcp_status, portMAX_DELAY); // CLear 0x04 && 0x08 Flags
 
         ESP_LOGD(TASK_TAG, "Notification Receieved 0x%08x", avrcp_status);
 
@@ -114,9 +118,29 @@ static void avrcp_notify_task() {
                 if((cxn_attempt_count % 3) == 0) retry_delay = (retry_delay * retry_delay) + 1;
             }
 
-            if(avrcp_status & 0x04) {   // Track changed, request "now playing" data update
+            if(avrcp_status & 0x04) {   // Track changed, request "now playing"
                 ESP_LOGI(TASK_TAG, "Track Changed...");
                 avrcp_req_now_playing();
+            }
+
+            if(avrcp_status & 0x08) {   // Track info updated, pull it
+                strcpy(cur_track_info.track_title, avrcp_get_track_str());
+                strcpy(cur_track_info.album_name, avrcp_get_album_str());
+                strcpy(cur_track_info.artist_name, avrcp_get_artist_str());
+
+                uint16_t cur_track_total_tracks = avrcp_get_track_info();
+
+                cur_track_info.total_tracks = (uint8_t) cur_track_total_tracks & 0x0F;
+                cur_track_info.cur_track = (uint8_t) (cur_track_total_tracks >> 8) & 0x0F;
+
+                cur_track_info.track_len_ms = avrcp_get_track_len_ms();
+
+                ESP_LOGI(TASK_TAG, "Track Info: %s - %s - %s\t%d/%d",
+                                cur_track_info.track_title,
+                                cur_track_info.album_name,
+                                cur_track_info.artist_name,
+                                cur_track_info.cur_track, cur_track_info.total_tracks);
+                xQueueSend(bt_info_queue, &cur_track_info, 100);
             }
         }
     }
