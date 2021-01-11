@@ -21,6 +21,7 @@ typedef struct {
     char album_name[128];
     char track_title[128];
     char artist_name[64];
+    char playback_state[16];
 
     uint32_t track_len_ms;
     uint8_t cur_track;

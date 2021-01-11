@@ -83,6 +83,19 @@ static void init_emulated_devs() {
     vTaskDelete(NULL);
 }
 
+static void bt_info_task() {
+    bt_now_playing_info_t info;
+
+    while(1) {
+        if(xQueueReceive(bt_info_queue, (void *)&info, (portTickType)portMAX_DELAY)) {
+            strcpy(sdrs_display_buf->chan_disp, "Spotify");
+            strcpy(sdrs_display_buf->artist_disp, info.artist_name);
+            strcpy(sdrs_display_buf->song_disp, info.track_title);
+        }
+    }
+    vTaskDelete(NULL); // In case we leave the loop, to avoid a panic
+}
+
 void send_dev_ready(uint8_t source, uint8_t dest, bool startup) {
     //* SOURCE -> DEST "Device Status Ready"
     kbus_message_t message = {
@@ -151,11 +164,11 @@ static void kbus_rx_task() {
                 //     cdc_emulator(message);
                 //     break;
 
-                // case TEL:
-                //     ESP_LOGD(TAG, "Message for TEL module Received");
-                //     ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_DEBUG);
-                //     tel_emulator(message);
-                //     break;
+                case TEL:
+                    ESP_LOGD(TAG, "Message for TEL module Received");
+                    ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_DEBUG);
+                    tel_emulator(message);
+                    break;
 
                 default:
                     break;

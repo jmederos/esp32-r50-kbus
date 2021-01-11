@@ -40,7 +40,7 @@ void sdrs_init_emulation(QueueHandle_t kbus_tx_queue, sdrs_display_buf_t* displa
     tx_queue = kbus_tx_queue;
     display_buf = display_buffer;
 
-    sprintf(display_buf->chan_disp, "iPhone - No Info");
+    sprintf(display_buf->chan_disp, "No Channel Info");
     sprintf(display_buf->artist_disp, "No Artist Info");
     sprintf(display_buf->song_disp, "No Song Info");
     sprintf(display_buf->esn_disp, "112358132134");
