@@ -32,6 +32,8 @@ static QueueHandle_t bt_info_queue;
 static QueueHandle_t kbus_rx_queue; //TODO: Message Buffer instead of Queue... lol, not available on esp-idf 4.0.2; will be on 4.3
 static QueueHandle_t kbus_tx_queue; //TODO: See https://github.com/espressif/esp-idf/issues/4945 for details
 
+static TaskHandle_t tel_display_tsk = NULL;
+
 static sdrs_display_buf_t* sdrs_display_buf = NULL;
 
 static void init_emulated_devs();
@@ -39,9 +41,9 @@ static void kbus_rx_task();
 static void cdc_emulator(kbus_message_t rx_msg);
 static void tel_emulator(kbus_message_t rx_msg);
 static void mfl_handler(uint8_t mfl_cmd[2]);
-static void display_message(uint8_t cmd, uint8_t layout, uint8_t flags, char* text);
-static void display_fuzz_task();
+static void display_tel_msg(uint8_t cmd, uint8_t layout, uint8_t flags, char* text);
 static void bt_info_task();
+static void tel_display_task();
 
 #ifdef QUEUE_DEBUG
 static void create_kbus_queue_watcher();
@@ -62,6 +64,9 @@ void init_kbus_service(QueueHandle_t bt_command_q, QueueHandle_t bt_track_info_q
 
     tsk_ret = xTaskCreate(bt_info_task, "bt_trk_info", 4096, NULL, KBUS_TASK_PRIORITY-2, NULL);
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "bt_trk_info creation failed with: %d", tsk_ret);}
+
+    tsk_ret = xTaskCreate(tel_display_task, "tel_dis_tsk", 4096, NULL, KBUS_TASK_PRIORITY-2, &tel_display_tsk);
+    if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "tel_dis_tsk creation failed with: %d", tsk_ret);}
 
 #ifdef QUEUE_DEBUG
     create_kbus_queue_watcher();
@@ -85,13 +90,18 @@ static void init_emulated_devs() {
 
 static void bt_info_task() {
     bt_now_playing_info_t info;
-
     while(1) {
         if(xQueueReceive(bt_info_queue, (void *)&info, (portTickType)portMAX_DELAY)) {
             strcpy(sdrs_display_buf->chan_disp, "Spotify");
             strcpy(sdrs_display_buf->artist_disp, info.artist_name);
             strcpy(sdrs_display_buf->song_disp, info.track_title);
+
+            // If incoming string is new, update MID
+            if(!strcmp(sdrs_display_buf->song_disp, info.track_title)){
+                if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x01, eSetBits);
+            }
         }
+        vTaskDelay(HERTZ(1)); // Rate limit updates to 1Hz
     }
     vTaskDelete(NULL); // In case we leave the loop, to avoid a panic
 }
@@ -354,6 +364,78 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
         ESP_LOGD(TAG, "Sending BT Command 0x%02x", bt_command);
         xQueueSend(bt_cmd_queue, &bt_command, (portTickType)portMAX_DELAY);
     }
+}
+
+static void tel_display_task() {
+    char msg_buf[256];
+    char mid_buf[12];
+    
+    static uint32_t notification;
+    static const uint8_t text_limit = 11;
+    
+    uint8_t msg_len = 0;
+    uint8_t msg_pos = 0;
+    bool should_scroll = false;
+    bool should_display = false;
+
+    while(1){
+        xTaskNotifyWait(0x00000000, 0x00000001, &notification, 0); // CLear 0x01 on exit and continue
+        if(notification == 0x01) {
+            should_display = true;
+            should_scroll = false;
+            msg_pos = 0;
+            bzero(mid_buf, sizeof(mid_buf));
+            bzero(msg_buf, sizeof(msg_buf));
+
+            sprintf(msg_buf, "%s-%s", sdrs_display_buf->song_disp, sdrs_display_buf->artist_disp);
+            msg_len = strlen(msg_buf);
+
+            ESP_LOGI(TAG, "%s", msg_buf);
+
+            if(msg_len > text_limit){
+                should_scroll = true;
+            }
+            vTaskDelay(10);
+            display_tel_msg(UPDATE_MID, 0x42, 0x31, "iPH");
+            vTaskDelay(10);
+            display_tel_msg(UPDATE_MID, 0x42, 0x33, "xx");
+        }
+
+        if(should_display){
+            if(should_scroll) {
+                uint8_t end_pos = msg_pos + text_limit;
+
+                if(end_pos > msg_len) msg_pos = 0; //Reset to start of buffer
+
+                strncpy(mid_buf, msg_buf + msg_pos, text_limit);
+                msg_pos++;
+            
+                ESP_LOGI(TAG, "Scrolling|| %s ||", mid_buf);
+                display_tel_msg(UPDATE_MID, 0x42, 0x32, mid_buf);
+
+            } else {
+                ESP_LOGI(TAG, "Displaying|| %s ||", msg_buf);
+                display_tel_msg(UPDATE_MID, 0x42, 0x32, msg_buf);
+            }
+        }
+
+        vTaskDelay(SECONDS(3));
+    }
+}
+
+static void display_tel_msg(uint8_t cmd, uint8_t layout, uint8_t flags, char* text) {
+    uint8_t text_len = strlen(text);
+
+    kbus_message_t message = {
+        .src = TEL,
+        .dst = IKE,
+        .body = {cmd, layout, flags},
+        .body_len = 3 + text_len
+    };
+
+    message.body_len = 3 + text_len;
+        memcpy(&message.body[3], text, message.body_len - 1);
+        xQueueSend(kbus_tx_queue, &message, (portTickType)portMAX_DELAY);
 }
 
 #ifdef QUEUE_DEBUG

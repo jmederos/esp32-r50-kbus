@@ -43,7 +43,7 @@ void sdrs_init_emulation(QueueHandle_t kbus_tx_queue, sdrs_display_buf_t* displa
     sprintf(display_buf->chan_disp, "No Channel Info");
     sprintf(display_buf->artist_disp, "No Artist Info");
     sprintf(display_buf->song_disp, "No Song Info");
-    sprintf(display_buf->esn_disp, "112358132134");
+    sprintf(display_buf->esn_disp, "1123580130");
 
     int tsk_ret = xTaskCreatePinnedToCore(emu_task, "sdrs_emu", 4096, NULL, EMU_TASK_PRIORITY, NULL, 1);
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "sdrs_emu creation failed with: %d", tsk_ret);}

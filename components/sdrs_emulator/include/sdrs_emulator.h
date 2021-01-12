@@ -22,7 +22,7 @@
 #define SDRS_CHAN_DN_ACK    0x03
 
 typedef struct {
-    char chan_disp[256];
+    char chan_disp[128];
     char song_disp[128];
     char artist_disp[64];
     char esn_disp[32];
