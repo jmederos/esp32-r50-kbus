@@ -1,3 +1,7 @@
+[submodule "components/kbus_uart_driver"]
+	path = components/kbus_uart_driver
+	url = https://github.com/jmederos/kbus_uart_driver.git
+
 [submodule "components/espfs"]
 	path = components/espfs
 	url = https://github.com/jkent/esp32-espfs.git
