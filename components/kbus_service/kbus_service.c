@@ -372,22 +372,27 @@ static void tel_display_task() {
     
     static uint32_t notification;
     static const uint8_t text_limit = 11;
+    static const uint8_t step_size = 8;
     
+    uint16_t seconds = 0;
     uint8_t msg_len = 0;
     uint8_t msg_pos = 0;
+
     bool should_scroll = false;
+    bool should_update = false;
     bool should_display = false;
 
     while(1){
-        xTaskNotifyWait(0x00000000, 0x00000001, &notification, 0); // CLear 0x01 on exit and continue
+        xTaskNotifyWait(0x00000000, 0x00000001, &notification, SECONDS(1)); // CLear 0x01 on exit and continue
         if(notification == 0x01) {
             should_display = true;
             should_scroll = false;
+            seconds = 0;
             msg_pos = 0;
             bzero(mid_buf, sizeof(mid_buf));
             bzero(msg_buf, sizeof(msg_buf));
 
-            sprintf(msg_buf, "%s-%s", sdrs_display_buf->song_disp, sdrs_display_buf->artist_disp);
+            sprintf(msg_buf, "%s<>%s", sdrs_display_buf->song_disp, sdrs_display_buf->artist_disp);
             msg_len = strlen(msg_buf);
 
             ESP_LOGI(TAG, "%s", msg_buf);
@@ -395,31 +400,26 @@ static void tel_display_task() {
             if(msg_len > text_limit){
                 should_scroll = true;
             }
-            vTaskDelay(10);
-            display_tel_msg(UPDATE_MID, 0x42, 0x31, "iPH");
-            vTaskDelay(10);
-            display_tel_msg(UPDATE_MID, 0x42, 0x33, "xx");
         }
+        
+        should_update = !(seconds % 15);
+        seconds++;
 
-        if(should_display){
+        if(should_display && should_update){
+
             if(should_scroll) {
-                uint8_t end_pos = msg_pos + text_limit;
-
-                if(end_pos > msg_len) msg_pos = 0; //Reset to start of buffer
-
-                strncpy(mid_buf, msg_buf + msg_pos, text_limit);
-                msg_pos++;
+                if(msg_pos + step_size > msg_len) msg_pos = 0; //Reset to start of buffer
+                strncpy(mid_buf, msg_buf + msg_pos, text_limit); //strncpy pads with 0 if we go beyond \0 delimeter
+                msg_pos+=step_size;
             
                 ESP_LOGI(TAG, "Scrolling|| %s ||", mid_buf);
                 display_tel_msg(UPDATE_MID, 0x42, 0x32, mid_buf);
 
             } else {
-                ESP_LOGI(TAG, "Displaying|| %s ||", msg_buf);
+                ESP_LOGI(TAG, "Static|| %s ||", msg_buf);
                 display_tel_msg(UPDATE_MID, 0x42, 0x32, msg_buf);
             }
         }
-
-        vTaskDelay(SECONDS(3));
     }
 }
 

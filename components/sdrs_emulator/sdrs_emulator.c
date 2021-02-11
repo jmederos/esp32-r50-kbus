@@ -87,7 +87,7 @@ static void emu_task() {
                          * ? Looks like it either confirms the SAT tuning on deactivatiohn, or this might be a
                          * ? brief status update after SAT is no longer the source. Analyzing the logs, the two different
                          * ? <3D 01 00> command messages recieved have matching channel && preset values as the regular
-                         * ? status update messages.
+                         * ? status update messages that immediately preceeded.
                          * 
                          * ? Type              Status Update            Sleep Status
                          * ? Command             <3D 02 00>      <=>     <3D 01 00>
