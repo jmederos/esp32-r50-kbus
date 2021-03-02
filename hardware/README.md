@@ -15,9 +15,9 @@
 | Part | Status | Notes |
 | --- | --- | --- |
 | [ON Semi NCV7428D13R2G](https://www.digikey.com/en/products/detail/on-semiconductor/5022588) | ❓ | 
-| [NXP TJA1021T](https://www.digikey.com/en/products/detail/nxp-usa-inc/2034448) | ✔ | Using as a bus controller to simulate a
+| [NXP TJA1021T](https://www.digikey.com/en/products/detail/nxp-usa-inc/2034448) | ✔ | Using with a CP2102 USB arrow
 | [TI SN65HVDA195QDRQ1](https://www.digikey.com/en/products/detail/texas-instruments/2094636) | ✔ | Used on initial perfboard prototypes. Works ok, but susceptible to glitching the bus; doesn't have tx timeout or contention detection.
 | [Microchip MCP2025-330E-SN](https://www.digikey.com/en/products/detail/microchip-technology/3543134) | ❓ |
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbMTQzNDE5NDIxMl19
+eyJoaXN0b3J5IjpbMTQwMDQyODQxOV19
 -->
