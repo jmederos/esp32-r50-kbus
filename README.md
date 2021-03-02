@@ -20,7 +20,8 @@
 K-bus/I-bus to Bluetooth bridge for Mini/BMWs. Based on ESP32.
 
 ### Hardware
-See [Hardware](hardware/README) folder
+
+See [hardware](hardware/README) folder
 
 ### Software
 
@@ -84,6 +85,6 @@ Distributed under the MPL 2.0 License. See `LICENSE` for more information.
 [linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=flat-square&logo=linkedin&colorB=555
 [linkedin-url]: https://linkedin.com/in/jacobmederos
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbNDMwODM4MzEsLTE4NzI1NjgwMjAsMjY2Nz
-A2ODY3XX0=
+eyJoaXN0b3J5IjpbMTc0MjgzNDIxNywtMTg3MjU2ODAyMCwyNj
+Y3MDY4NjddfQ==
 -->
