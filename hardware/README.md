@@ -15,11 +15,11 @@
 | Part | Status | Notes |
 | --- | --- | --- |
 | [ON Semi NCV7428D13R2G](https://www.digikey.com/en/products/detail/on-semiconductor/5022588) | ❓ | Have, but not yet tested
-| [NXP TJA1021T](https://www.digikey.com/en/products/detail/nxp-usa-inc/2034448) | ✔ | Using with a CP2102 USB ⇄ Serial to interface with NavCoder and simulate network on desktop
+| [NXP TJA1021T](https://www.digikey.com/en/products/detail/nxp-usa-inc/2034448) | ✔ | Using with a `CP2102` USB ⇄ Serial to interface with NavCoder and simulate network on desktop
 | [TI SN65HVDA195QDRQ1](https://www.digikey.com/en/products/detail/texas-instruments/2094636) | ✔ | Used on initial perfboard prototypes. Works ok, but susceptible to glitching the bus; doesn't have tx timeout or contention detection.
 | [Microchip MCP2025-330E-SN](https://www.digikey.com/en/products/detail/microchip-technology/3543134) | ❓ | Have, but not yet tested
-| [Microchip MCP2004(A)](https://www.digikey.com/en/products/detail/MCP2004AT-E-SN/2803651) | ✔ | Selected for tx timeout and bus contention detection + added bonus of `FAULT` pin. Working on desktop simulation
+| [Microchip MCP2004(A)](https://www.digikey.com/en/products/detail/MCP2004AT-E-SN/2803651) | ✔ | Selected for tx timeout and bus contention detection + added bonus of `FAULT` pin. So far, only tested `MCP2004A`; works in simulated bus.
 
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbLTY0MDI4NzY2Nl19
+eyJoaXN0b3J5IjpbMjA3ODQxNjE2Nl19
 -->
