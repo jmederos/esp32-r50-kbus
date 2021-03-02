@@ -1,0 +1,16 @@
+# Hardware
+
+* [Sparkfun MicroMod ESP32](https://www.sparkfun.com/products/16781)
+* [Sparkfun MicroMod ATP Board](https://www.sparkfun.com/products/16885)
+* ~~[On Semi NCV7805BTG 5V Regulator](https://www.digikey.com/en/products/detail/on-semiconductor/921437)~~
+* [USB Power Supply](https://www.amazon.com/gp/product/B07KWRH61D)
+
+#### Candidate K-bus ICs
+
+* [ON Semi NCV7428D13R2G](https://www.digikey.com/en/products/detail/on-semiconductor/5022588) ❓
+* [NXP TJA1021T](https://www.digikey.com/en/products/detail/nxp-usa-inc/2034448) ❓
+* [TI SN65HVDA195QDRQ1](https://www.digikey.com/en/products/detail/texas-instruments/2094636) ✔
+* [Microchip MCP2025-330E-SN](https://www.digikey.com/en/products/detail/microchip-technology/3543134) ❓
+<!--stackedit_data:
+eyJoaXN0b3J5IjpbMTI0NDA4Nzc3Nl19
+-->
