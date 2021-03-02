@@ -61,9 +61,11 @@ _Note: Helper scripts in tools folder assume a WSL Ubuntu install w/ESP32 on Win
 ## Roadmap
 | Feature | Status | Notes |
 | --- | --- | --- |
-| Software POC: control phone via AVRCP w/o A2DP advertised. | 👌 | _Although part of the BT spec, example implementations on AVRCP-only are hard to come by._ |
-| Hardware POC: acquire + test k-line transceivers. | 🙌 |   |
-| K-bus proof concept, pickup MFL messages. | 👍 | _Works in vehicle, works in mockup w/Navcoder + iPhone streaming to a BT headphone amp._ |
+| Software POC: control phone via AVRCP w/o A2DP advertised. | 👌🏽 | _Although part of the BT spec, example implementations on AVRCP-only are hard to come by._ |
+| Hardware POC: acquire + test k-line transceivers. | 🙌🏽 |   |
+| K-bus proof concept, pickup MFL messages. | 👍🏽 | _Works in vehicle, works in mockup w/Navcoder + iPhone streaming to a BT headphone amp._ |
+| Write to radio head unit display | 🥳 | _Seems to work, now let's do scrolling display_ |
+| SDRS Emulation | 👍🏽 | _Works in vehicle, works in mockup w/Navcoder + iPhone streaming to a BT headphone amp._ |
 | Write to radio head unit display | 🥳 | _Seems to work, now let's do scrolling display_ |
 | [AMS](https://developer.apple.com/library/archive/documentation/CoreBluetooth/Reference/AppleMediaService_Reference/Specification/Specification.html) instead of AVRCP |   | _Didn't know this was a thing, seems like a better bet; btstack + esp-idf is a little clunky._ |
 | [ANCS](https://developer.apple.com/library/archive/documentation/CoreBluetooth/Reference/AppleNotificationCenterServiceSpecification/Introduction/Introduction.html) Support & update radio display w/push notification | 🤞 |   |
@@ -85,6 +87,6 @@ Distributed under the MPL 2.0 License. See `LICENSE` for more information.
 [linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=flat-square&logo=linkedin&colorB=555
 [linkedin-url]: https://linkedin.com/in/jacobmederos
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbMTc0MjgzNDIxNywtMTg3MjU2ODAyMCwyNj
-Y3MDY4NjddfQ==
+eyJoaXN0b3J5IjpbMTQ0MzcwMTAyLDE3NDI4MzQyMTcsLTE4Nz
+I1NjgwMjAsMjY2NzA2ODY3XX0=
 -->
