@@ -19,8 +19,8 @@
 | [TI SN65HVDA195QDRQ1](https://www.digikey.com/en/products/detail/texas-instruments/2094636) | 👎🏽 | Used on initial in-car perfboard prototypes. Works ok, but susceptible to glitching the bus (doors randomly unlocked); doesn't have tx timeout or contention detection. Best used to create a simulated bus as the controlling node like the `NXP` part above.
 | [Microchip MCP2025](https://www.digikey.com/en/products/detail/microchip-technology/3543134) | 🤷🏽‍♂️ | Have it; unlikely to test/use it. Doesn't have failsafe features and isn't pin-compatible w/`TI`
 | [Microchip MCP2004(A)](https://www.digikey.com/en/products/detail/MCP2004AT-E-SN/2803651) | 👍🏽 | Selected for tx timeout and bus contention detection + added bonus of `FAULT` pin. Also pin compatible with `TI` and `NXP` parts used for prototyping. So far, only tested `MCP2004A`; works in simulated bus setup.
-| [Microchip MCP2003B](https://www.digikey.com/en/products/detail/this-gets-ignored-🤷🏽‍♂️/5810590) | 🤷🏽‍♂️ | Selected for tx timeout and bus contention detection. Have it; still untested.
+| [Microchip MCP2003B](https://www.digikey.com/en/products/detail/this-gets-ignored-🤷🏽‍♂️/5810590) | 🤷🏽‍♂️ | elected for tx timeout and bus contention detection. Also pin compatible with `TI` and `NXP` parts used for prototyping. Have it; still untested.
 
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbNDEzMzcwODk1LC0xNzQzNTI5MDIzXX0=
+eyJoaXN0b3J5IjpbNDE5OTAzMjk3LC0xNzQzNTI5MDIzXX0=
 -->
