@@ -19,8 +19,8 @@
 | [TI SN65HVDA195QDRQ1](https://www.digikey.com/en/products/detail/texas-instruments/2094636) | ✔ | Used on initial perfboard prototypes. Works ok, but susceptible to glitching the bus; doesn't have tx timeout or contention detection.
 | [Microchip MCP2025](https://www.digikey.com/en/products/detail/microchip-technology/3543134) | ❓ | Have, but not yet tested
 | [Microchip MCP2004(A)](https://www.digikey.com/en/products/detail/MCP2004AT-E-SN/2803651) | ✔ | Selected for tx timeout and bus contention detection + added bonus of `FAULT` pin. So far, only tested `MCP2004A`; works in simulated bus.
-| [Microchip MCP2003B](https://www.digikey.com/en/products/detail/MCP2004AT-E-SN/2803651) | ✔ | Selected for tx timeout and bus contention detection. Have but not tested.
+| [Microchip MCP2003B](https://www.digikey.com/en/products/detail/this-gets-ignored-🤷🏽‍♂️/5810590) | ❓ | Selected for tx timeout and bus contention detection. Have but not tested.
 
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbMTM2NjM3Njk3Nl19
+eyJoaXN0b3J5IjpbLTE3NDM1MjkwMjNdfQ==
 -->
