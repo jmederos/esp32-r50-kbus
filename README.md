@@ -94,3 +94,6 @@ Distributed under the MPL 2.0 License. See `LICENSE` for more information.
 [license-url]: https://github.com/jmederos/esp32-r50-kbus/blob/master/LICENSE
 [linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=flat-square&logo=linkedin&colorB=555
 [linkedin-url]: https://linkedin.com/in/jacobmederos
+<!--stackedit_data:
+eyJoaXN0b3J5IjpbMjY2NzA2ODY3XX0=
+-->
