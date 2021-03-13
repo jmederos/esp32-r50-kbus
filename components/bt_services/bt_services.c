@@ -38,8 +38,10 @@ static bt_now_playing_info_t cur_track_info;
 static void setup_cmd_task();
 static void bt_cmd_task();
 
+#if SHOULD_AUTOCONNECT
 static void setup_notify_task();
 static void avrcp_notify_task();
+#endif
 
 int bluetooth_services_setup(QueueHandle_t command_queue, QueueHandle_t info_queue) {
     // optional: enable packet logger
@@ -76,6 +78,7 @@ int bluetooth_services_setup(QueueHandle_t command_queue, QueueHandle_t info_que
     return 0;
 }
 
+#if SHOULD_AUTOCONNECT
 static void setup_notify_task() {
     int tsk_ret = xTaskCreatePinnedToCore(avrcp_notify_task, "bt_auto_con", 4096, NULL, AUTOCON_TASK_PRIORITY, &avrcp_notification_task, 0);
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "bt_auto_con creation failed with: %d", tsk_ret);}
@@ -145,6 +148,7 @@ static void avrcp_notify_task() {
         }
     }
 }
+#endif
 
 static void setup_cmd_task() {
     int tsk_ret = xTaskCreatePinnedToCore(bt_cmd_task, "bt_cmd", 2048, NULL, BT_TASK_PRIORITY, NULL, 0);
