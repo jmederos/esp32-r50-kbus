@@ -17,11 +17,13 @@
 
 ## About
 
-K-bus/I-bus to Bluetooth bridge for Mini/BMWs. Based on ESP32.
+K-bus/I-bus to Bluetooth bridge for Mini/BMWs. Developed on esp-idf 4.0.2 and a 2006 Mini Cooper. Main goal was to get AVRCP control from steering wheel to iPhone; going forward looking to make it a platform for emulating K-bus devices.
+
+<img src="hardware/images/IMG_4050.JPG" width="75%">
 
 ### Hardware
 
-See [hardware](hardware/README) folder
+See [hardware](hardware) folder
 
 ### Software
 
