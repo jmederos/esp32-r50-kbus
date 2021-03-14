@@ -21,17 +21,7 @@ K-bus/I-bus to Bluetooth bridge for Mini/BMWs. Based on ESP32.
 
 ### Hardware
 
-* [Sparkfun MicroMod ESP32](https://www.sparkfun.com/products/16781)
-* [Sparkfun MicroMod ATP Board](https://www.sparkfun.com/products/16885)
-* ~~[On Semi NCV7805BTG 5V Regulator](https://www.digikey.com/en/products/detail/on-semiconductor/921437)~~
-* [USB Power Supply](https://www.amazon.com/gp/product/B07KWRH61D)
-
-#### Candidate K-bus ICs
-
-* [ON Semi NCV7428D13R2G](https://www.digikey.com/en/products/detail/on-semiconductor/5022588) ❓
-* [NXP TJA1021T](https://www.digikey.com/en/products/detail/nxp-usa-inc/2034448) ❓
-* [TI SN65HVDA195QDRQ1](https://www.digikey.com/en/products/detail/texas-instruments/2094636) ✔
-* [Microchip MCP2025-330E-SN](https://www.digikey.com/en/products/detail/microchip-technology/3543134) ❓
+See [hardware](hardware/README) folder
 
 ### Software
 
@@ -71,9 +61,11 @@ _Note: Helper scripts in tools folder assume a WSL Ubuntu install w/ESP32 on Win
 ## Roadmap
 | Feature | Status | Notes |
 | --- | --- | --- |
-| Software POC: control phone via AVRCP w/o A2DP advertised. | 👌 | _Although part of the BT spec, example implementations on AVRCP-only are hard to come by._ |
-| Hardware POC: acquire + test k-line transceivers. | 🙌 |   |
-| K-bus proof concept, pickup MFL messages. | 👍 | _Works in vehicle, works in mockup w/Navcoder + iPhone streaming to a BT headphone amp._ |
+| Software POC: control phone via AVRCP w/o A2DP advertised. | 👌🏽 | _Although part of the BT spec, example implementations on AVRCP-only are hard to come by._ |
+| Hardware POC: acquire + test k-line transceivers. | 🙌🏽 |   |
+| K-bus proof concept, pickup MFL messages. | 👍🏽 | _Works in vehicle, works in mockup w/Navcoder + iPhone streaming to a BT headphone amp._ |
+| Write to radio head unit display | 🥳 | _Seems to work, now let's do scrolling display_ |
+| SDRS Emulation | 👍🏽 | _Functional, didn't really like the fact that FiiO BT amp didn't shutdown with car; will stick to aux input + `TEL` display updates for now._ |
 | Write to radio head unit display | 🥳 | _Seems to work, now let's do scrolling display_ |
 | [AMS](https://developer.apple.com/library/archive/documentation/CoreBluetooth/Reference/AppleMediaService_Reference/Specification/Specification.html) instead of AVRCP |   | _Didn't know this was a thing, seems like a better bet; btstack + esp-idf is a little clunky._ |
 | [ANCS](https://developer.apple.com/library/archive/documentation/CoreBluetooth/Reference/AppleNotificationCenterServiceSpecification/Introduction/Introduction.html) Support & update radio display w/push notification | 🤞 |   |
