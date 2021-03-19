@@ -65,6 +65,7 @@ static uint8_t  avrcp_subevent_value[100];
 static char track_str[256];
 static char artist_str[256];
 static char album_str[256];
+static uint32_t cur_play_flag = 0;
 static uint32_t track_len_ms = 0;
 static uint8_t track_no = 0;
 static uint8_t total_tracks = 0;
@@ -213,9 +214,9 @@ static void avrcp_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
             ESP_LOGI(TAG, "AVRCP: Connected to %s, cid 0x%02x", bd_addr_to_str(adress), avrcp_cid);
 
             // automatically enable notifications
-            avrcp_controller_enable_notification(avrcp_cid, AVRCP_NOTIFICATION_EVENT_PLAYBACK_STATUS_CHANGED);
             avrcp_controller_enable_notification(avrcp_cid, AVRCP_NOTIFICATION_EVENT_NOW_PLAYING_CONTENT_CHANGED);
             avrcp_controller_enable_notification(avrcp_cid, AVRCP_NOTIFICATION_EVENT_TRACK_CHANGED);
+            avrcp_controller_enable_notification(avrcp_cid, AVRCP_NOTIFICATION_EVENT_PLAYBACK_STATUS_CHANGED);
 
             // Notify service task that connection succeeded
             if(bt_service_task != NULL) xTaskNotify(bt_service_task, 0x02, eSetBits);
@@ -266,25 +267,29 @@ static void avrcp_controller_packet_handler(uint8_t packet_type, uint16_t channe
         case AVRCP_SUBEVENT_NOTIFICATION_PLAYBACK_POS_CHANGED:
             ESP_LOGD(TAG, "AVRCP Controller: Playback position changed, position %d ms", (unsigned int) avrcp_subevent_notification_playback_pos_changed_get_playback_position_ms(packet));
             break;
-        case AVRCP_SUBEVENT_NOTIFICATION_PLAYBACK_STATUS_CHANGED:
-            ESP_LOGD(TAG, "AVRCP Controller: Playback status changed %s", avrcp_play_status2str(avrcp_subevent_notification_playback_status_changed_get_play_status(packet)));
-            return;
+        case AVRCP_SUBEVENT_NOTIFICATION_PLAYBACK_STATUS_CHANGED: {
+            uint8_t cur_play_status = avrcp_subevent_notification_playback_status_changed_get_play_status(packet);
+            cur_play_flag = ((cur_play_status << 8) & 0x0000FF00);
+            ESP_LOGD(TAG, "AVRCP Controller: Playback status changed %s. Setting flag to: 0x%04x", avrcp_play_status2str(cur_play_status), cur_play_flag);
+            if(bt_service_task != NULL) xTaskNotify(bt_service_task, cur_play_flag, eSetBits);
+            break;
+        }
         case AVRCP_SUBEVENT_NOTIFICATION_NOW_PLAYING_CONTENT_CHANGED:
             ESP_LOGD(TAG, "AVRCP Controller: Playing content changed");
             avrcp_controller_get_now_playing_info(avrcp_cid);
-            return;
+            break;
         case AVRCP_SUBEVENT_NOTIFICATION_TRACK_CHANGED:
             ESP_LOGD(TAG, "AVRCP Controller: Track changed");
             ESP_LOGD(TAG, "packet_type: 0x%02x\t\tchannel: %d\tsize: %d\tpacket_addr: %x", packet_type, channel, size, (int)packet);
             ESP_LOG_BUFFER_HEXDUMP(TAG, packet, 16, ESP_LOG_DEBUG);
-            if(bt_service_task != NULL) xTaskNotify(bt_service_task, 0x04, eSetBits);
-            return;
+            if(bt_service_task != NULL) xTaskNotify(bt_service_task, cur_play_flag | 0x04, eSetBits);
+            break;
         case AVRCP_SUBEVENT_NOTIFICATION_VOLUME_CHANGED:
             ESP_LOGD(TAG, "AVRCP Controller: Absolute volume changed %d", avrcp_subevent_notification_volume_changed_get_absolute_volume(packet));
-            return;
+            break;
         case AVRCP_SUBEVENT_NOTIFICATION_AVAILABLE_PLAYERS_CHANGED:
             ESP_LOGD(TAG, "AVRCP Controller: Changed");
-            return; 
+            break; 
         case AVRCP_SUBEVENT_SHUFFLE_AND_REPEAT_MODE:{
             uint8_t shuffle_mode = avrcp_subevent_shuffle_and_repeat_mode_get_shuffle_mode(packet);
             uint8_t repeat_mode  = avrcp_subevent_shuffle_and_repeat_mode_get_repeat_mode(packet);
@@ -336,7 +341,7 @@ static void avrcp_controller_packet_handler(uint8_t packet_type, uint16_t channe
             track_len_ms = avrcp_subevent_now_playing_song_length_ms_info_get_song_length(packet);
             ESP_LOGD(TAG, "AVRCP Controller:     Length: %"PRIu32" ms", track_len_ms);
             // In testing, this is consistently the last packet of info parsed, so let's notify bt_task to pull new data.
-            if(bt_service_task != NULL) xTaskNotify(bt_service_task, 0x08, eSetBits);
+            if(bt_service_task != NULL) xTaskNotify(bt_service_task, cur_play_flag | 0x08, eSetBits);
             break;
         
         case AVRCP_SUBEVENT_PLAY_STATUS:

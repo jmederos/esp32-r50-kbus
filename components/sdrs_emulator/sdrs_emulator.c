@@ -40,10 +40,10 @@ void sdrs_init_emulation(QueueHandle_t kbus_tx_queue, sdrs_display_buf_t* displa
     tx_queue = kbus_tx_queue;
     display_buf = display_buffer;
 
-    sprintf(display_buf->chan_disp, "No Channel Info");
-    sprintf(display_buf->artist_disp, "No Artist Info");
-    sprintf(display_buf->song_disp, "No Song Info");
-    sprintf(display_buf->esn_disp, "1123580130");
+    sprintf(display_buf->channel, "SDRS Channel");
+    sprintf(display_buf->artist, "SDRS Artist");
+    sprintf(display_buf->song, "SDRS Song");
+    sprintf(display_buf->esn, "1123581321");
 
     int tsk_ret = xTaskCreatePinnedToCore(emu_task, "sdrs_emu", 4096, NULL, EMU_TASK_PRIORITY, NULL, 1);
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "sdrs_emu creation failed with: %d", tsk_ret);}
@@ -124,9 +124,9 @@ static void emu_task() {
                             tx_msg.body[3] = cur_channel;           // Current Channel
                             tx_msg.body[4] = bank_preset_byte();    // Preset Bank && Preset number (each gets a nibble)
                             tx_msg.body[5] = 0x04;                  // ¯\_(ツ)_/¯   Some flag set on bit 2
-                            tx_msg.body_len = 6 + strlen(display_buf->chan_disp);
+                            tx_msg.body_len = 6 + strlen(display_buf->channel);
 
-                            memcpy(&tx_msg.body[6], display_buf->chan_disp, strlen(display_buf->chan_disp)); // Channel Name Text
+                            memcpy(&tx_msg.body[6], display_buf->channel, strlen(display_buf->channel)); // Channel Name Text
                             xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
                             break;
 
@@ -146,9 +146,9 @@ static void emu_task() {
                             tx_msg.body[3] = cur_channel;           // Current Channel
                             tx_msg.body[4] = bank_preset_byte();    // Preset Bank && Preset number (each gets a nibble)
                             tx_msg.body[5] = 0x04;                  // ¯\_(ツ)_/¯   Some flag set on bit 2
-                            tx_msg.body_len = 6 + strlen(display_buf->chan_disp);
+                            tx_msg.body_len = 6 + strlen(display_buf->channel);
 
-                            memcpy(&tx_msg.body[6], display_buf->chan_disp, strlen(display_buf->chan_disp)); // Channel Name Text
+                            memcpy(&tx_msg.body[6], display_buf->channel, strlen(display_buf->channel)); // Channel Name Text
                             xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
                             break;
 
@@ -159,9 +159,9 @@ static void emu_task() {
                             tx_msg.body[3] = cur_channel;           // Current Channel
                             tx_msg.body[4] = bank_preset_byte();    // Preset Bank && Preset number (each gets a nibble)
                             tx_msg.body[5] = 0x04;                  // ¯\_(ツ)_/¯   Some flag set on bit 2
-                            tx_msg.body_len = 6 + strlen(display_buf->chan_disp);
+                            tx_msg.body_len = 6 + strlen(display_buf->channel);
 
-                            memcpy(&tx_msg.body[6], display_buf->chan_disp, strlen(display_buf->chan_disp)); // Channel Name Text
+                            memcpy(&tx_msg.body[6], display_buf->channel, strlen(display_buf->channel)); // Channel Name Text
                             xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
                             break;
 
@@ -171,9 +171,9 @@ static void emu_task() {
                             tx_msg.body[3] = 0x30;                  // Current Channel set to 48 (0x30)
                             tx_msg.body[4] = 0x30;                  // Presets byte is set to 0x30 for ESN
                             tx_msg.body[5] = 0x30;                  // ¯\_(ツ)_/¯ 
-                            tx_msg.body_len = 6 + strlen(display_buf->esn_disp);
+                            tx_msg.body_len = 6 + strlen(display_buf->esn);
 
-                            memcpy(&tx_msg.body[6], display_buf->esn_disp, strlen(display_buf->esn_disp)); // Channel Name Text
+                            memcpy(&tx_msg.body[6], display_buf->esn, strlen(display_buf->esn)); // Channel Name Text
                             xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
                             break;
 
@@ -184,9 +184,9 @@ static void emu_task() {
                             tx_msg.body[3] = cur_channel;           // Current Channel
                             tx_msg.body[4] = bank_preset_byte();    // Preset Bank && Preset number (each gets a nibble)
                             tx_msg.body[5] = 0x04;                  // ¯\_(ツ)_/¯   Some flag set on bit 2
-                            tx_msg.body_len = 6 + strlen(display_buf->chan_disp);
+                            tx_msg.body_len = 6 + strlen(display_buf->channel);
 
-                            memcpy(&tx_msg.body[6], display_buf->chan_disp, strlen(display_buf->chan_disp)); // Channel Name Text
+                            memcpy(&tx_msg.body[6], display_buf->channel, strlen(display_buf->channel)); // Channel Name Text
                             xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
                             break;
 
@@ -196,9 +196,9 @@ static void emu_task() {
                             tx_msg.body[3] = cur_channel;           // Current Channel
                             tx_msg.body[4] = 0x01;                  // Bank 0 && Preset 1 for Artist Text
                             tx_msg.body[5] = 0x01;                  // ¯\_(ツ)_/¯   Some flag set on bit 0
-                            tx_msg.body_len = 6 + strlen(display_buf->artist_disp);
+                            tx_msg.body_len = 6 + strlen(display_buf->artist);
 
-                            memcpy(&tx_msg.body[6], display_buf->artist_disp, strlen(display_buf->artist_disp)); // Artist Name Text
+                            memcpy(&tx_msg.body[6], display_buf->artist, strlen(display_buf->artist)); // Artist Name Text
                             xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
                             break;
 
@@ -208,9 +208,9 @@ static void emu_task() {
                             tx_msg.body[3] = cur_channel;           // Channel
                             tx_msg.body[4] = 0x01;                  // Bank 0 && Preset 1 for Song Text
                             tx_msg.body[5] = 0x01;                  // ¯\_(ツ)_/¯   Some flag set on bit 0
-                            tx_msg.body_len = 6 + strlen(display_buf->song_disp);
+                            tx_msg.body_len = 6 + strlen(display_buf->song);
 
-                            memcpy(&tx_msg.body[6], display_buf->song_disp, strlen(display_buf->song_disp)); // Song Name Text
+                            memcpy(&tx_msg.body[6], display_buf->song, strlen(display_buf->song)); // Song Name Text
                             xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
                             break;
 

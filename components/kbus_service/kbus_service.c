@@ -18,9 +18,11 @@
 #include "kbus_defines.h"
 #include "bt_common.h"
 #include "sdrs_emulator.h"
+#include "special_chars.h"
 
 // ! Debug Flags
 // #define QUEUE_DEBUG
+// #define DISPLAY_FUZZING
 
 #define HERTZ(hz) ((1000/hz)/portTICK_RATE_MS)
 #define SECONDS(sec) ((sec*1000) / portTICK_RATE_MS)
@@ -47,6 +49,15 @@ static void tel_display_task();
 
 #ifdef QUEUE_DEBUG
 static void create_kbus_queue_watcher();
+#endif
+
+#ifdef DISPLAY_FUZZING
+static TaskHandle_t char_fuzz_tsk = NULL;
+static TaskHandle_t layout_fuzz_tsk = NULL;
+static void create_char_fuzz_tsk();
+static void destroy_char_fuzz_tsk();
+static void create_layout_fuzz_tsk();
+static void destroy_layout_fuzz_tsk();
 #endif
 
 void init_kbus_service(QueueHandle_t bt_command_q, QueueHandle_t bt_track_info_q) {
@@ -77,6 +88,7 @@ static void init_emulated_devs() {
     vTaskDelay(SECONDS(1));
 
     sdrs_display_buf = (sdrs_display_buf_t*) malloc(sizeof(sdrs_display_buf_t));
+    strcpy(sdrs_display_buf->channel, "\205\206");
     sdrs_init_emulation(kbus_tx_queue, sdrs_display_buf);
 
     vTaskDelay(50);
@@ -92,13 +104,29 @@ static void bt_info_task() {
     bt_now_playing_info_t info;
     while(1) {
         if(xQueueReceive(bt_info_queue, (void *)&info, (portTickType)portMAX_DELAY)) {
-            strcpy(sdrs_display_buf->chan_disp, "Spotify");
-            strcpy(sdrs_display_buf->artist_disp, info.artist_name);
-            strcpy(sdrs_display_buf->song_disp, info.track_title);
+            strcpy(sdrs_display_buf->artist, info.artist_name);
 
-            // If incoming string is new, update MID
-            if(!strcmp(sdrs_display_buf->song_disp, info.track_title)){
-                if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x01, eSetBits);
+            ESP_LOGE(TAG, "%s-%s-%s", info.artist_name, info.track_title, info.state_detail);
+
+            // If not playing, display info message
+            if(info.bt_state != MEDIA_PLAYING) {
+                strcpy(sdrs_display_buf->channel, info.state_detail);
+                if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x02, eSetValueWithOverwrite);
+            }
+            // If incoming song string is new and not empty, display song/artist
+            else if(strcmp(sdrs_display_buf->song, info.track_title) && strcmp(info.track_title, "")){
+                strcpy(sdrs_display_buf->channel, info.state_detail);
+                strcpy(sdrs_display_buf->song, info.track_title);
+                if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x01, eSetValueWithOverwrite);
+            }
+            // If incoming song string matches last one, isn't empty, and info message has changed
+            else if(strcmp(sdrs_display_buf->channel, info.state_detail) || (!strcmp(sdrs_display_buf->song, info.track_title) && strcmp(info.track_title, ""))) {
+                strcpy(sdrs_display_buf->channel, info.state_detail);
+                if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x01, eSetValueWithOverwrite);
+            }
+            else { // Generic 'playing' info message
+                strcpy(sdrs_display_buf->channel, info.state_detail);
+                if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x02, eSetValueWithOverwrite);
             }
         }
         vTaskDelay(HERTZ(1)); // Rate limit updates to 1Hz
@@ -310,7 +338,11 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
                     }
                     last_mfl_cmd[0] = mfl_cmd[0];
                     last_mfl_cmd[1] = mfl_cmd[1];
-                    bt_command = AVRCP_PLAY;
+                    #ifdef DISPLAY_FUZZING
+                        create_char_fuzz_tsk();
+                    #else
+                        bt_command = AVRCP_PLAY;
+                    #endif
                     break;
 
                 //* A button up event, let's check previous state.
@@ -322,19 +354,31 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
                         ESP_LOGD(TAG, "Last BT command matches");
                         switch(last_mfl_cmd[1]) {
                             case 0x01:
+                            #ifdef DISPLAY_FUZZING
+                                create_layout_fuzz_tsk();
+                            #else
                                 bt_command = AVRCP_NEXT;
+                            #endif
                                 break;
                             case 0x11:
                                 bt_command = AVRCP_FF_STOP;
                                 break;
                             case 0x80:
+                            #ifdef DISPLAY_FUZZING
+                                destroy_char_fuzz_tsk();
+                            #else
                                 bt_command = AVRCP_STOP;
+                            #endif
                                 break;
                             case 0x90:
                                 // NOOP: Long press AVRCP_PLAY handled during previous event
                                 break;
                             case 0x08:
+                            #ifdef DISPLAY_FUZZING
+                                destroy_layout_fuzz_tsk();
+                            #else
                                 bt_command = AVRCP_PREV;
+                            #endif
                                 break;
                             case 0x18:
                                 bt_command = AVRCP_RWD_STOP;
@@ -371,55 +415,67 @@ static void tel_display_task() {
     char mid_buf[12];
     
     static uint32_t notification;
-    static const uint8_t text_limit = 11;
-    static const uint8_t step_size = 8;
+    static const uint8_t text_limit = 10;
+    static const uint8_t step_size = 5;
     
-    uint16_t seconds = 0;
+    uint16_t cur_secs = 0;
+    uint8_t refresh_secs = 10;
     uint8_t msg_len = 0;
     uint8_t msg_pos = 0;
 
-    bool should_scroll = false;
-    bool should_update = false;
-    bool should_display = false;
+    bool disp_will_scroll = false;
+    bool disp_will_refresh = false;
+    bool disp_will_update = false;
 
     while(1){
-        xTaskNotifyWait(0x00000000, 0x00000001, &notification, SECONDS(1)); // CLear 0x01 on exit and continue
-        if(notification == 0x01) {
-            should_display = true;
-            should_scroll = false;
-            seconds = 0;
+        xTaskNotifyWait(0x00000000, 0x00000003, &notification, SECONDS(1)); // CLear 0x01 (new track) && 0x02 (stop) on exit and continue
+
+        disp_will_refresh = !(cur_secs % refresh_secs);
+
+        if (notification == 0x01) {
+            disp_will_scroll = false;
+            disp_will_update = true;
+            disp_will_refresh = true;
+            cur_secs = 0;
             msg_pos = 0;
             bzero(mid_buf, sizeof(mid_buf));
             bzero(msg_buf, sizeof(msg_buf));
 
-            sprintf(msg_buf, "%s<>%s", sdrs_display_buf->song_disp, sdrs_display_buf->artist_disp);
-            msg_len = strlen(msg_buf);
-
+            sprintf(msg_buf, "%s%c%s", sdrs_display_buf->song, DOT_CHAR, sdrs_display_buf->artist);
             ESP_LOGI(TAG, "%s", msg_buf);
-
-            if(msg_len > text_limit){
-                should_scroll = true;
-            }
         }
-        
-        should_update = !(seconds % 15);
-        seconds++;
+        else if (notification == 0x02) {
+            disp_will_update = false;
+            disp_will_scroll = false;
+            bzero(mid_buf, sizeof(mid_buf));
+            bzero(msg_buf, sizeof(msg_buf));
 
-        if(should_display && should_update){
+            sprintf(msg_buf, "%s", sdrs_display_buf->channel);
+            ESP_LOGI(TAG, "%s", msg_buf);
+            display_tel_msg(TEL_TITLE_TXT, 0x42, 0x32, msg_buf);
+        }
 
-            if(should_scroll) {
+        if(disp_will_update && disp_will_refresh){
+            msg_len = strlen(msg_buf);
+            if(msg_len > text_limit){
+                disp_will_scroll = true;
+            }
+
+            if(disp_will_scroll) {
                 if(msg_pos + step_size > msg_len) msg_pos = 0; //Reset to start of buffer
                 strncpy(mid_buf, msg_buf + msg_pos, text_limit); //strncpy pads with 0 if we go beyond \0 delimeter
                 msg_pos+=step_size;
             
                 ESP_LOGI(TAG, "Scrolling|| %s ||", mid_buf);
-                display_tel_msg(UPDATE_MID, 0x42, 0x32, mid_buf);
+                display_tel_msg(TEL_TITLE_TXT, 0x42, 0x32, mid_buf);
 
             } else {
                 ESP_LOGI(TAG, "Static|| %s ||", msg_buf);
-                display_tel_msg(UPDATE_MID, 0x42, 0x32, msg_buf);
+                display_tel_msg(TEL_TITLE_TXT, 0x42, 0x32, msg_buf);
             }
         }
+
+        cur_secs++;
     }
 }
 
@@ -462,5 +518,43 @@ static void kbus_queue_watcher(){
 static void create_kbus_queue_watcher(){
     int task_ret = xTaskCreate(kbus_queue_watcher, "kbus_queue_watcher", 4096, NULL, 5, NULL);
     if(task_ret != pdPASS){ESP_LOGE(TAG, "kbus_queue_watcher creation failed with: %d", task_ret);}
+}
+#endif
+
+#ifdef DISPLAY_FUZZING
+static void disp_char_fuzz_task() {
+    char buff[16];
+    for(uint8_t i=0; i<255; i++) {
+        sprintf(buff, "%03d %cTest", i, i);
+        display_tel_msg(TEL_TITLE_TXT, 0x42, 0x32, buff);
+        vTaskDelay(SECONDS(2));
+    }
+    vTaskDelete(NULL);
+}
+static void create_char_fuzz_tsk() {
+    int tsk_ret = xTaskCreate(disp_char_fuzz_task, "char_fuzzing", 4096, NULL, KBUS_TASK_PRIORITY-2, &char_fuzz_tsk);
+    if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "char_fuzzing creation failed with: %d", tsk_ret);}
+}
+static void destroy_char_fuzz_tsk() {
+    vTaskDelete(char_fuzz_tsk);
+}
+
+static void disp_layout_fuzz_task() {
+    char buff[16];
+    for(uint8_t layout=0x40; layout<0x80; layout++) {
+        for(uint8_t flgs=0x10; flgs<50; flgs++) {
+            sprintf(buff, "%02x%c%02x", layout, DOT_CHAR, flgs);
+            display_tel_msg(TEL_TITLE_TXT, layout, flgs, buff);
+            vTaskDelay(SECONDS(2));            
+        }
+    }
+    vTaskDelete(NULL);
+}
+static void create_layout_fuzz_tsk() {
+    int tsk_ret = xTaskCreate(disp_layout_fuzz_task, "layout_fuzz", 4096, NULL, KBUS_TASK_PRIORITY-2, &layout_fuzz_tsk);
+    if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "layout_fuzz creation failed with: %d", tsk_ret);}
+}
+static void destroy_layout_fuzz_tsk() {
+    vTaskDelete(layout_fuzz_tsk);
 }
 #endif

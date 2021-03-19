@@ -15,6 +15,7 @@
 #include "avrcp_control_driver.h"
 
 #include "bt_common.h"
+#include "special_chars.h"
 
 #define SECONDS(sec) ((sec*1000) / portTICK_RATE_MS)
 
@@ -88,15 +89,14 @@ static void avrcp_notify_task() {
     static const char* TASK_TAG = "bt_auto_con";
     uint32_t avrcp_status = 0;
     uint16_t retry_delay = 1;
-    uint8_t cxn_attempt_count = 0;
+    uint16_t cxn_attempt_count = 0;
 
     ESP_LOGD(TASK_TAG, "Autoconnect task started. Blocking while BT boots...");
     vTaskDelay(SECONDS(10)); // Block for 10 seconds while bt boots...
 
     while(1) {
         ESP_LOGD(TASK_TAG, "Waiting for AVRCP Notification...");
-        xTaskNotifyWait(0x00000000, 0x0000000C, &avrcp_status, portMAX_DELAY); // CLear 0x04 && 0x08 Flags
-
+        xTaskNotifyWait(0x00000000, 0x0000FF0C, &avrcp_status, portMAX_DELAY); // Clear 0x04 (New Track), 0x08 (Updated Metadata) Flags, 0xFF00 (play status)
         ESP_LOGD(TASK_TAG, "Notification Receieved 0x%08x", avrcp_status);
 
         // avrcp_did_init bit set
@@ -104,11 +104,21 @@ static void avrcp_notify_task() {
 
             // if avrcp connected flag is set
             if( (avrcp_status & 0x02) ) {
-                // Reset counter and delay
-                cxn_attempt_count = 0;
-                retry_delay = 1;
-
-                ESP_LOGI(TASK_TAG, "Successfully connected to %s", AUTOCONNECT_ADDR);
+                if(cxn_attempt_count > 0){
+                    ESP_LOGI(TASK_TAG, "Successfully connected to %s", AUTOCONNECT_ADDR);
+                    // Clear out track info
+                    strcpy(cur_track_info.track_title, "");
+                    strcpy(cur_track_info.album_name,  "");
+                    strcpy(cur_track_info.artist_name, "");
+                    // Set state details
+                    cur_track_info.bt_state = DEV_CONNECTED;
+                    sprintf(cur_track_info.state_detail, "%cConnected%c",RT_STRIPE_TRI, LT_STRIPE_TRI);
+                    // Put "track data" on queue
+                    xQueueSend(bt_info_queue, &cur_track_info, 0);
+                    // Reset counter and delay
+                    cxn_attempt_count = 0;
+                    retry_delay = 1;
+                }
             } else if((cxn_attempt_count < MAX_CONN_RETRIES)) { // Otherwise, connected flag is unset; let's check cxn_attempts and retry.
 
                 ESP_LOGI(TASK_TAG, "Attempting bt autoconnect: %02d/%02d", cxn_attempt_count + 1, MAX_CONN_RETRIES);
@@ -117,18 +127,59 @@ static void avrcp_notify_task() {
                 avrcp_ctl_connect();
                 cxn_attempt_count++;
 
-                // Every 3 connection attempts increase delay
-                if((cxn_attempt_count % 3) == 0) retry_delay = (retry_delay * retry_delay) + 1;
+                // Every 2 connection attempts increase by f(x) = 2x; this should yeild increasing delay for first 30sec with 10sec delays thereafter.
+                if(((cxn_attempt_count % 2) == 0) && (retry_delay < 11)) retry_delay *= 2;
+
+                // Clear out track info
+                strcpy(cur_track_info.track_title, "");
+                strcpy(cur_track_info.album_name,  "");
+                strcpy(cur_track_info.artist_name, "");
+                // Set state details
+                cur_track_info.bt_state = DEV_CONNECTING;
+                sprintf(cur_track_info.state_detail, "Connecting%c", SIGNAL_1 - (cxn_attempt_count%4));
+                // Put "track data" on queue
+                xQueueSend(bt_info_queue, &cur_track_info, 0);
+            } else {
+                // Clear out track info
+                strcpy(cur_track_info.track_title, "");
+                strcpy(cur_track_info.album_name,  "");
+                strcpy(cur_track_info.artist_name, "");
+
+                cur_track_info.bt_state = DEV_DISCONNECTED;
+                strcpy(cur_track_info.state_detail, "Disconnected");
+                
+                xQueueSend(bt_info_queue, &cur_track_info, 0);
             }
 
-            if(avrcp_status & 0x04) {   // Track changed, request "now playing"
-                ESP_LOGI(TASK_TAG, "Track Changed...");
-                avrcp_req_now_playing();
+            if(avrcp_status & 0xFF00) {
+                bt_avrcp_state_t cur_playback_state = ((avrcp_status & 0x0000FF00) >> 8);
+                cur_track_info.bt_state = cur_playback_state;
+                ESP_LOGW(TASK_TAG, "Current Playback State 0x%02x", cur_playback_state);
+                switch (cur_playback_state) {
+                    case MEDIA_STOPPED:
+                        sprintf(cur_track_info.state_detail, "Stop  %c", SIGNAL_3);
+                        break;
+                    case MEDIA_PLAYING:
+                        sprintf(cur_track_info.state_detail, "Play  %c", RT_SOLID_TRI);
+                        break;
+                    case MEDIA_PAUSED:
+                        sprintf(cur_track_info.state_detail, "Pause %c", PAUSE_CHAR);
+                        break;
+                    case MEDIA_SEEK_FWD:
+                        sprintf(cur_track_info.state_detail, "Seek %c%c", RT_SOLID_TRI, RT_SOLID_TRI);
+                        break;
+                    case MEDIA_SEEK_RWD:
+                        sprintf(cur_track_info.state_detail, "Seek %c%c", LT_SOLID_TRI, LT_SOLID_TRI);
+                        break;
+                    default:
+                        break;
+                }
+                xQueueSend(bt_info_queue, &cur_track_info, 10);
             }
 
             if(avrcp_status & 0x08) {   // Track info updated, pull it
                 strcpy(cur_track_info.track_title, avrcp_get_track_str());
-                strcpy(cur_track_info.album_name, avrcp_get_album_str());
+                strcpy(cur_track_info.album_name,  avrcp_get_album_str());
                 strcpy(cur_track_info.artist_name, avrcp_get_artist_str());
 
                 uint16_t cur_track_total_tracks = avrcp_get_track_info();
@@ -143,7 +194,12 @@ static void avrcp_notify_task() {
                                 cur_track_info.album_name,
                                 cur_track_info.artist_name,
                                 cur_track_info.cur_track, cur_track_info.total_tracks);
-                xQueueSend(bt_info_queue, &cur_track_info, 100);
+                xQueueSend(bt_info_queue, &cur_track_info, 10);
+            }
+
+            if(avrcp_status & 0x04) {   // Track changed, request "now playing"
+                ESP_LOGI(TASK_TAG, "Track Changed...");
+                avrcp_req_now_playing();
             }
         }
     }

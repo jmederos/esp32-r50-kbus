@@ -22,10 +22,10 @@
 #define SDRS_CHAN_DN_ACK    0x03
 
 typedef struct {
-    char chan_disp[128];
-    char song_disp[128];
-    char artist_disp[64];
-    char esn_disp[32];
+    char channel[128];
+    char song[128];
+    char artist[64];
+    char esn[32];
 } sdrs_display_buf_t;
 
 void sdrs_init_emulation(QueueHandle_t kbus_tx_queue, sdrs_display_buf_t* display_buffer);

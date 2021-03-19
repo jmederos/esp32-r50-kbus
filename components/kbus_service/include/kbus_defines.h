@@ -104,7 +104,7 @@
 #define DISPLAY_STATUS      0x20    //Display Status
 #define MENU_TXT            0x21    //Menu Text
 #define TXT_DISPLAY_CONF    0x22    //Text display confirmation
-#define UPDATE_MID          0x23    //Update MID
+#define TEL_TITLE_TXT       0x23    //TEL Title Text
 #define UPDATE_ANZV         0x24    //Update ANZV
 #define OBC_UPDATE          0x2A    //On-Board Computer State Update
 #define TEL_LEDS            0x2B    //Telephone LED Indicators
