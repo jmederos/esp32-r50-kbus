@@ -13,18 +13,13 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 
-// btstack includes
-#include "btstack_port_esp32.h"
-#include "btstack_run_loop.h"
-#include "hci_dump.h"
-
 // component includes
 #include "bt_services.h"
-#include "wifi_service.h"
+// #include "wifi_service.h"
 #include "kbus_service.h"
-#include "bt_common.h"
+#include "media_common.h"
 
-#define SECONDS(sec) ((sec*1000) / portTICK_RATE_MS)
+#define SECONDS(sec) ((sec*1000) / portTICK_PERIOD_MS)
 
 // TODO: Add these as menuconfig items
 #define R50_BT_ENABLED
@@ -34,7 +29,7 @@
 // #define TASK_DEBUG
 
 static const char* TAG = "r50-main";
-static QueueHandle_t bt_cmd_queue, bt_info_queue;
+static QueueHandle_t media_cmd_queue, media_info_queue;
 
 #ifdef TASK_DEBUG
 static void watcher_task(){
@@ -87,12 +82,12 @@ int app_main(void){
 #endif
 
     // Setup bluetooth command queue
-    bt_cmd_queue = xQueueCreate(4, sizeof(bt_cmd_type_t));
+    media_cmd_queue = xQueueCreate(4, sizeof(media_cmd_type_t));
     // Setup bluetooth "now playing" queue
-    bt_info_queue = xQueueCreate(2, sizeof(bt_now_playing_info_t));
+    media_info_queue = xQueueCreate(2, sizeof(media_now_playing_t));
 
     // Setup kbus service; has side-effect of initializing and starting UART driver.
-    init_kbus_service(bt_cmd_queue, bt_info_queue);
+    init_kbus_service(media_cmd_queue, media_info_queue);
 
 #ifdef R50_WIFI_ENABLED // Gating wifi and bt since there's still issues with them running concurrently.
     wifi_init_softap();
@@ -100,11 +95,11 @@ int app_main(void){
 
 #ifdef R50_BT_ENABLED
     ESP_LOGI(TAG, "Starting bt services...");
-    bluetooth_services_setup(bt_cmd_queue, bt_info_queue);
+    bluetooth_services_setup(media_cmd_queue, media_info_queue);
     // Running btstack_run_loop_execute() as it's own task or in a wrapper wasn't working;
     // however, does work as lowest priority loop after other tasks. Going with this.
     ESP_LOGI(TAG, "btstack run loop");
-    btstack_run_loop_execute();
+    // btstack_run_loop_execute();
 #else
     while(1) {
         printf("Bluetooth runloop goes here...\n");

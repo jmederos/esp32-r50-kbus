@@ -18,8 +18,8 @@
 #include "kbus_service.h"
 #include "sdrs_emulator.h"
 
-#define HERTZ(hz) ((1000/hz)/portTICK_RATE_MS)
-#define SECONDS(sec) ((sec*1000) / portTICK_RATE_MS)
+#define HERTZ(hz) ((1000/hz)/portTICK_PERIOD_MS)
+#define SECONDS(sec) ((sec*1000) / portTICK_PERIOD_MS)
 #define EMU_TASK_PRIORITY configMAX_PRIORITIES-5
 
 static const char* TAG = "sdrs_emu";
@@ -62,7 +62,7 @@ static void emu_task() {
     };
 
     while(1) {
-        if(xQueueReceive(rx_queue, (void * )&rx_msg, (portTickType)portMAX_DELAY)) {
+        if(xQueueReceive(rx_queue, (void * )&rx_msg,portMAX_DELAY)) {
             tx_msg.dst = rx_msg.src;      // SDRS -> SOURCE
 
             switch(rx_msg.body[0]) {
@@ -103,7 +103,7 @@ static void emu_task() {
                             tx_msg.body[4] = bank_preset_byte();  // Preset Bank && Preset number (each gets a nibble)
                             tx_msg.body[5] = 0x04;  // ¯\_(ツ)_/¯   Some flag set on bit 2
                             tx_msg.body_len = 6;
-                            xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
+                            xQueueSend(tx_queue, &tx_msg,portMAX_DELAY);
                             break;
 
                         case SDRS_REQ_CHAN_UP:  // Channel up
@@ -116,7 +116,7 @@ static void emu_task() {
                             tx_msg.body[4] = bank_preset_byte();    // Preset Bank && Preset number (each gets a nibble)
                             tx_msg.body[5] = 0x04;                  // ¯\_(ツ)_/¯   Some flag set on bit 2
                             tx_msg.body_len = 6;
-                            xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
+                            xQueueSend(tx_queue, &tx_msg,portMAX_DELAY);
 
                             vTaskDelay(SECONDS(1));
                             tx_msg.body[1] = SDRS_UPDATE_TXT;       // Text Update
@@ -127,7 +127,7 @@ static void emu_task() {
                             tx_msg.body_len = 6 + strlen(display_buf->channel);
 
                             memcpy(&tx_msg.body[6], display_buf->channel, strlen(display_buf->channel)); // Channel Name Text
-                            xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
+                            xQueueSend(tx_queue, &tx_msg,portMAX_DELAY);
                             break;
 
                         case SDRS_REQ_CHAN_DN:  // Channel down
@@ -138,7 +138,7 @@ static void emu_task() {
                             tx_msg.body[4] = bank_preset_byte();    // Preset Bank && Preset number (each gets a nibble)
                             tx_msg.body[5] = 0x04;                  // ¯\_(ツ)_/¯   Some flag set on bit 2
                             tx_msg.body_len = 6;
-                            xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
+                            xQueueSend(tx_queue, &tx_msg,portMAX_DELAY);
 
                             vTaskDelay(SECONDS(1));
                             tx_msg.body[1] = SDRS_UPDATE_TXT;       // Text Update
@@ -149,7 +149,7 @@ static void emu_task() {
                             tx_msg.body_len = 6 + strlen(display_buf->channel);
 
                             memcpy(&tx_msg.body[6], display_buf->channel, strlen(display_buf->channel)); // Channel Name Text
-                            xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
+                            xQueueSend(tx_queue, &tx_msg,portMAX_DELAY);
                             break;
 
                         case SDRS_REQ_PRESET:  // Preset recall to preset in rx_msg.body[2]
@@ -162,7 +162,7 @@ static void emu_task() {
                             tx_msg.body_len = 6 + strlen(display_buf->channel);
 
                             memcpy(&tx_msg.body[6], display_buf->channel, strlen(display_buf->channel)); // Channel Name Text
-                            xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
+                            xQueueSend(tx_queue, &tx_msg,portMAX_DELAY);
                             break;
 
                         case SDRS_REQ_ESN:  // SAT long press, show ESN
@@ -174,7 +174,7 @@ static void emu_task() {
                             tx_msg.body_len = 6 + strlen(display_buf->esn);
 
                             memcpy(&tx_msg.body[6], display_buf->esn, strlen(display_buf->esn)); // Channel Name Text
-                            xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
+                            xQueueSend(tx_queue, &tx_msg,portMAX_DELAY);
                             break;
 
                         case SDRS_REQ_BANK_UP:  // SAT pushed, change preset bank
@@ -187,7 +187,7 @@ static void emu_task() {
                             tx_msg.body_len = 6 + strlen(display_buf->channel);
 
                             memcpy(&tx_msg.body[6], display_buf->channel, strlen(display_buf->channel)); // Channel Name Text
-                            xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
+                            xQueueSend(tx_queue, &tx_msg,portMAX_DELAY);
                             break;
 
                         case SDRS_REQ_ARTIST:  // Artist Text Req.
@@ -199,7 +199,7 @@ static void emu_task() {
                             tx_msg.body_len = 6 + strlen(display_buf->artist);
 
                             memcpy(&tx_msg.body[6], display_buf->artist, strlen(display_buf->artist)); // Artist Name Text
-                            xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
+                            xQueueSend(tx_queue, &tx_msg,portMAX_DELAY);
                             break;
 
                         case SDRS_REQ_SONG:  // Song Text Req.
@@ -211,7 +211,7 @@ static void emu_task() {
                             tx_msg.body_len = 6 + strlen(display_buf->song);
 
                             memcpy(&tx_msg.body[6], display_buf->song, strlen(display_buf->song)); // Song Name Text
-                            xQueueSend(tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
+                            xQueueSend(tx_queue, &tx_msg,portMAX_DELAY);
                             break;
 
                         default:

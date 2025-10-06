@@ -16,7 +16,7 @@
 #include "kbus_uart_driver.h"
 #include "kbus_service.h"
 #include "kbus_defines.h"
-#include "bt_common.h"
+#include "media_common.h"
 #include "sdrs_emulator.h"
 #include "special_chars.h"
 
@@ -24,13 +24,13 @@
 // #define QUEUE_DEBUG
 // #define DISPLAY_FUZZING
 
-#define HERTZ(hz) ((1000/hz)/portTICK_RATE_MS)
-#define SECONDS(sec) ((sec*1000) / portTICK_RATE_MS)
+#define HERTZ(hz) ((1000/hz)/portTICK_PERIOD_MS)
+#define SECONDS(sec) ((sec*1000) / portTICK_PERIOD_MS)
 #define KBUS_TASK_PRIORITY configMAX_PRIORITIES-5
 
 static const char* TAG = "kbus_service";
-static QueueHandle_t bt_cmd_queue;
-static QueueHandle_t bt_info_queue;
+static QueueHandle_t media_cmd_queue;
+static QueueHandle_t media_info_queue;
 static QueueHandle_t kbus_rx_queue; //TODO: Message Buffer instead of Queue... lol, not available on esp-idf 4.0.2; will be on 4.3
 static QueueHandle_t kbus_tx_queue; //TODO: See https://github.com/espressif/esp-idf/issues/4945 for details
 
@@ -61,8 +61,8 @@ static void destroy_layout_fuzz_tsk();
 #endif
 
 void init_kbus_service(QueueHandle_t bt_command_q, QueueHandle_t bt_track_info_q) {
-    bt_cmd_queue = bt_command_q;
-    bt_info_queue = bt_track_info_q;
+    media_cmd_queue = bt_command_q;
+    media_info_queue = bt_track_info_q;
     kbus_rx_queue = xQueueCreate(8, sizeof(kbus_message_t));
     kbus_tx_queue = xQueueCreate(4, sizeof(kbus_message_t));
 
@@ -101,15 +101,15 @@ static void init_emulated_devs() {
 }
 
 static void bt_info_task() {
-    bt_now_playing_info_t info;
+    media_now_playing_t info;
     while(1) {
-        if(xQueueReceive(bt_info_queue, (void *)&info, (portTickType)portMAX_DELAY)) {
+        if(xQueueReceive(media_info_queue, (void*) &info, portMAX_DELAY)) {
             strcpy(sdrs_display_buf->artist, info.artist_name);
 
             ESP_LOGE(TAG, "%s-%s-%s", info.artist_name, info.track_title, info.state_detail);
 
             // If not playing, display info message
-            if(info.bt_state != MEDIA_PLAYING) {
+            if(info.state != MEDIA_PLAYING) {
                 strcpy(sdrs_display_buf->channel, info.state_detail);
                 if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x02, eSetValueWithOverwrite);
             }
@@ -151,13 +151,13 @@ void send_dev_ready(uint8_t source, uint8_t dest, bool startup) {
     } else {
         ESP_LOGD(TAG, "Queueing 0x%02x -> 0x%02x DEVICE READY", source, dest);
     }
-    xQueueSend(kbus_tx_queue, &message, (portTickType)portMAX_DELAY);
+    xQueueSend(kbus_tx_queue, &message,portMAX_DELAY);
 }
 
 static void kbus_rx_task() {
     kbus_message_t message;
     while(1) {
-        if(xQueueReceive(kbus_rx_queue, (void * )&message,  (portTickType)portMAX_DELAY)) {
+        if(xQueueReceive(kbus_rx_queue, (void * )&message, portMAX_DELAY)) {
             ESP_LOGD(TAG, "data from driver:");
             ESP_LOGD(TAG, "KBUS\t0x%02x -> 0x%02x", message.src, message.dst);
             ESP_LOG_BUFFER_HEXDUMP(TAG, message.body, message.body_len, ESP_LOG_DEBUG);
@@ -183,9 +183,9 @@ static void kbus_rx_task() {
                     if(message.body_len == 2 && message.body[0] == IGN_STAT_RPLY && message.body[1] == 0x03) {
                         ESP_LOGI(TAG, "Ignition On...");
                         // TODO: Need to guarantee it's only emitted once before requesting media begin playing
-                    //     // Send AVRCP_PLAY command when ignition_status bits set to: Pos1_Acc Pos2_On
-                    //     bt_cmd_type_t bt_command = AVRCP_PLAY;
-                    //     xQueueSend(bt_cmd_queue, &bt_command, (portTickType)portMAX_DELAY);
+                    //     // Send MEDIA_PLAY command when ignition_status bits set to: Pos1_Acc Pos2_On
+                    //     media_cmd_type_t bt_command = MEDIA_PLAY;
+                    //     xQueueSend(media_cmd_queue, &bt_command,portMAX_DELAY);
                     }
                     // Only care for this one particular GLOBAL message right now
                     break;
@@ -243,7 +243,7 @@ static void cdc_emulator(kbus_message_t rx_msg) {   //? Own component like SDRS?
             tx_msg.body[6] = 0x01;  // DISC number in reader. 0x01 --> Disc 1
             tx_msg.body[7] = 0x01;  // TRACK number.
             tx_msg.body_len = 8;
-            xQueueSend(kbus_tx_queue, &tx_msg, (portTickType)portMAX_DELAY);
+            xQueueSend(kbus_tx_queue, &tx_msg,portMAX_DELAY);
             ESP_LOGD(TAG, "CDC Queued: CD STATUS REPLY");
             return;
 
@@ -272,7 +272,7 @@ static void tel_emulator(kbus_message_t rx_msg) {
 static void mfl_handler(uint8_t mfl_cmd[2]) {
     //? Queue might be overkill for keeping last command
     static uint8_t *last_mfl_cmd = NULL;
-    bt_cmd_type_t bt_command = BT_CMD_NOOP;
+    media_cmd_type_t bt_command = BT_CMD_NOOP;
 
     inline void malloc_last_mfl() {
         if(last_mfl_cmd == NULL) {
@@ -320,7 +320,7 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
                     }
                     last_mfl_cmd[0] = mfl_cmd[0];
                     last_mfl_cmd[1] = mfl_cmd[1];
-                    bt_command = AVRCP_FF_START;
+                    bt_command = MEDIA_FF_START;
                     break;
                 case 0x18: // "search down pressed long"
                     ESP_LOGD(TAG, "MFL Down long press");
@@ -329,7 +329,7 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
                     }
                     last_mfl_cmd[0] = mfl_cmd[0];
                     last_mfl_cmd[1] = mfl_cmd[1];
-                    bt_command = AVRCP_RWD_START;
+                    bt_command = MEDIA_RWD_START;
                     break;
                 case 0x90: // "SEND/END pressed long"
                     ESP_LOGD(TAG, "MFL R/T long press");
@@ -341,7 +341,7 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
                     #ifdef DISPLAY_FUZZING
                         create_char_fuzz_tsk();
                     #else
-                        bt_command = AVRCP_PLAY;
+                        bt_command = MEDIA_PLAY;
                     #endif
                     break;
 
@@ -357,31 +357,31 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
                             #ifdef DISPLAY_FUZZING
                                 create_layout_fuzz_tsk();
                             #else
-                                bt_command = AVRCP_NEXT;
+                                bt_command = MEDIA_NEXT;
                             #endif
                                 break;
                             case 0x11:
-                                bt_command = AVRCP_FF_STOP;
+                                bt_command = MEDIA_FF_STOP;
                                 break;
                             case 0x80:
                             #ifdef DISPLAY_FUZZING
                                 destroy_char_fuzz_tsk();
                             #else
-                                bt_command = AVRCP_STOP;
+                                bt_command = MEDIA_STOP;
                             #endif
                                 break;
                             case 0x90:
-                                // NOOP: Long press AVRCP_PLAY handled during previous event
+                                // NOOP: Long press MEDIA_PLAY handled during previous event
                                 break;
                             case 0x08:
                             #ifdef DISPLAY_FUZZING
                                 destroy_layout_fuzz_tsk();
                             #else
-                                bt_command = AVRCP_PREV;
+                                bt_command = MEDIA_PREV;
                             #endif
                                 break;
                             case 0x18:
-                                bt_command = AVRCP_RWD_STOP;
+                                bt_command = MEDIA_RWD_STOP;
                                 break;
                             default:
                                 ESP_LOGW(TAG, "Mismatched previous event! Expected 0x%02x, got 0x%02x", last_mfl_cmd[1], mfl_cmd[1]);
@@ -405,8 +405,8 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
     }
 
     if(bt_command != BT_CMD_NOOP) { // Only put command on queue if it's a valid one
-        ESP_LOGD(TAG, "Sending BT Command 0x%02x", bt_command);
-        xQueueSend(bt_cmd_queue, &bt_command, (portTickType)portMAX_DELAY);
+        ESP_LOGD(TAG, "Sending Media Command 0x%02x", bt_command);
+        xQueueSend(media_cmd_queue, &bt_command, portMAX_DELAY);
     }
 }
 
@@ -491,25 +491,25 @@ static void display_tel_msg(uint8_t cmd, uint8_t layout, uint8_t flags, char* te
 
     message.body_len = 3 + text_len;
         memcpy(&message.body[3], text, message.body_len - 1);
-        xQueueSend(kbus_tx_queue, &message, (portTickType)portMAX_DELAY);
+        xQueueSend(kbus_tx_queue, &message,portMAX_DELAY);
 }
 
 #ifdef QUEUE_DEBUG
 static void kbus_queue_watcher(){
     #define WATCHER_DELAY 10
 
-    uint8_t kb_rx = 0, kb_tx = 0, bt_tx = 0;
+    uint8_t kb_rx = 0, kb_tx = 0, media_tx = 0;
     vTaskDelay(SECONDS(WATCHER_DELAY));
 
     while(1){
         kb_rx = uxQueueMessagesWaiting(kbus_rx_queue);
         kb_tx = uxQueueMessagesWaiting(kbus_tx_queue);
-        bt_tx = uxQueueMessagesWaiting(bt_cmd_queue);
+        media_tx = uxQueueMessagesWaiting(media_cmd_queue);
 
         printf("\n%sK-Bus Service Queued Messages%s\n", "\033[1m\033[4m\033[46m\033[K", LOG_RESET_COLOR);
         printf("kbus-rx\t%d\n", kb_rx);
         printf("kbus-tx\t%d\n", kb_tx);
-        printf("bt-tx\t%d\n", bt_tx);
+        printf("media-tx\t%d\n", media_tx);
 
         vTaskDelay(SECONDS(WATCHER_DELAY));
     }

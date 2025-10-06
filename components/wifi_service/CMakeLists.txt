@@ -1,5 +1,5 @@
 idf_component_register(
         SRCS "wifi_service.c"
         INCLUDE_DIRS "include"
-        PRIV_REQUIRES nvs_flash
-        )
+        REQUIRES nvs_flash esp_wifi esp_event esp_hw_support lwip
+)
