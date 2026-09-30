@@ -7,6 +7,7 @@
 #include "esp_system.h"
 #include "esp_log.h"
 #include "esp_peripheral.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
 #include "console/console.h"
@@ -33,30 +34,16 @@
 #define BT_TASK_PRIORITY    configMAX_PRIORITIES-8
 #define AUTOCON_TASK_PRIORITY BT_TASK_PRIORITY-10
 #define ANNOUNCE_STR        CONFIG_BT_ANNOUNCE_STR
-#define SHOULD_AUTOCONNECT  CONFIG_BT_AUTOCONNECT
-
-#if SHOULD_AUTOCONNECT
-    #define AUTOCONNECT_ADDR    CONFIG_BT_AUTOCONNECT_ADDR
-    #define MAX_CONN_RETRIES    CONFIG_BT_MAX_RETRIES
-#endif
 
 static const char* TAG = "bt-services";
 static QueueHandle_t media_cmd_queue;
 static QueueHandle_t media_info_queue;
-static TaskHandle_t avrcp_notification_task;
 
 static media_now_playing_t cur_track_info;
+static uint32_t passkey = 0; // Init passkey to 0
 
 static void setup_cmd_task();
 static void bt_cmd_task();
-static void periodic_timer_callback(void* arg);
-esp_timer_handle_t periodic_timer;
-
-const esp_timer_create_args_t periodic_timer_args = {
-    .callback = &periodic_timer_callback,
-    /* name is optional, but may help identify the timer when debugging */
-    .name = "ble-timer"
-};
 
 struct data_source_buffer {
     uint8_t buffer[1024];
@@ -66,56 +53,44 @@ struct data_source_buffer {
 static struct data_source_buffer ancs_buffer = {0};
 static uint16_t MTU_size = 23;
 
-uint16_t shared_e_handle;
-uint16_t shared_conn_handle;
+uint16_t shared_e_handle = 0;
+uint16_t shared_conn_handle = 0;
 
 bool ancs_setup_complete = false;
 bool ams_setup_complete = false;
 
-static int ble_ancs_gap_event(struct ble_gap_event *event, void *arg);
 static uint8_t own_addr_type;
 
+static int ble_ancs_gap_event(struct ble_gap_event *event, void *arg);
 void ble_store_config_init(void);
 
 int find_ancs_ams(uint16_t conn_handle){
 
     int rc = 0;
-
     if (!ams_setup_complete) {
         // Discover AMS
         rc = ble_gattc_disc_svc_by_uuid(conn_handle, &apple_media_service_uuid.u, ams_service_discovered_cb, NULL);
         if (rc != 0) {
-            MODLOG_DFLT(ERROR, "BLE_GAP_EVENT_ENC_CHANGE ERROR: 0x%04x", rc);
+            MODLOG_DFLT(ERROR, "find_ams ERROR: 0x%04x", rc);
             return rc;
         }
     }
-
     if (!ancs_setup_complete && ams_setup_complete) {
         // Discover ANCS
         rc = ble_gattc_disc_svc_by_uuid(conn_handle, &apple_nc_service_uuid.u, ancs_service_discovered_cb, NULL);
         if (rc != 0) { 
-            MODLOG_DFLT(ERROR, "BLE_GAP_EVENT_ENC_CHANGE ERROR: 0x%04x", rc);
+            MODLOG_DFLT(ERROR, "find_ancs ERROR: 0x%04x", rc);
             return rc;
         }
     }
     return 0;
 }
 
-static void periodic_timer_callback(void* arg)
-{
-    esp_timer_stop(periodic_timer);
-    if (ancs_buffer.len > 0) {
-        ancs_receive_apple_data_source(ancs_buffer.buffer, ancs_buffer.len);
-        memset(ancs_buffer.buffer, 0, ancs_buffer.len);
-        ancs_buffer.len = 0;
-    }
-}
-
 #if NIMBLE_BLE_CONNECT
 /**
  * Logs information about a connection to the console.
  */
-static void ble_main_print_conn_desc(struct ble_gap_conn_desc *desc) {
+static void ble_svc_print_conn_desc(struct ble_gap_conn_desc *desc) {
     MODLOG_DFLT(INFO, "handle=%d our_ota_addr_type=%d our_ota_addr=",
                 desc->conn_handle, desc->our_ota_addr.type);
     print_addr(desc->our_ota_addr.val);
@@ -129,12 +104,13 @@ static void ble_main_print_conn_desc(struct ble_gap_conn_desc *desc) {
                 desc->peer_id_addr.type);
     print_addr(desc->peer_id_addr.val);
     MODLOG_DFLT(INFO, " conn_itvl=%d conn_latency=%d supervision_timeout=%d "
-                "encrypted=%d authenticated=%d bonded=%d\n",
+                "encrypted=%d authenticated=%d bonded=%d key_size=%d\n",
                 desc->conn_itvl, desc->conn_latency,
                 desc->supervision_timeout,
                 desc->sec_state.encrypted,
                 desc->sec_state.authenticated,
-                desc->sec_state.bonded);
+                desc->sec_state.bonded,
+                desc->sec_state.key_size);
 }
 #endif
 
@@ -143,8 +119,8 @@ static void ble_main_print_conn_desc(struct ble_gap_conn_desc *desc) {
  *     o General discoverable mode.
  *     o Undirected connectable mode.
  */
-static void ble_main_advertise(void) {
-    ESP_LOGI(TAG, "ble_main_advertise");
+static void ble_svc_advertise(void) {
+    ESP_LOGI(TAG, "ble_svc_advertise");
     
     struct ble_gap_adv_params adv_params;
     struct ble_hs_adv_fields fields;
@@ -158,7 +134,6 @@ static void ble_main_advertise(void) {
      *     o Device name.
      *     o 16-bit service UUIDs (alert notifications).
      */
-
     memset(&fields, 0, sizeof fields);
 
     /* Advertise two flags:
@@ -192,6 +167,12 @@ static void ble_main_advertise(void) {
         MODLOG_DFLT(ERROR, "error setting advertisement data; rc=%d\n", rc);
         return;
     }
+
+    // set flags to false on every advertise
+    ancs_setup_complete = false;
+    ams_setup_complete  = false;
+    // Set to disconnected
+    *cur_track_info.state = DEV_DISCONNECTED;
 
     /* Begin advertising. */
     memset(&adv_params, 0, sizeof adv_params);
@@ -228,7 +209,7 @@ static void ble_main_on_sync(void) {
     print_addr(addr_val);
     MODLOG_DFLT(INFO, "\n");
     /* Begin advertising. */
-    ble_main_advertise();
+    ble_svc_advertise();
 }
 
 void ble_main_host_task(void *param) {
@@ -241,14 +222,43 @@ void ble_main_host_task(void *param) {
 int bluetooth_services_setup(QueueHandle_t command_queue, QueueHandle_t info_queue) {
 
     int rc;
+    esp_err_t ret;
 
+    // Setup bt command handler
+    media_cmd_queue = command_queue;
+    media_info_queue = info_queue;
+    setup_cmd_task();
+
+    // Setup cur_track pointers
+    cur_track_info.album_name  = ams_get_album_str();
+    cur_track_info.artist_name = ams_get_artist_str();
+    cur_track_info.track_title = ams_get_track_str();
+    cur_track_info.app_name    = ams_get_app_str();
+    cur_track_info.state       = (media_state_t*) ams_get_playback_state();
+
+    // TODO: Randomize passkey on each disconnect/reconnect instead of on boot
+    // Initialize random passkey and bitshift
+    esp_fill_random(&passkey, 2);
+    passkey = passkey >> 2;
+
+    // Initialize to disconnected state
+    *cur_track_info.state = DEV_DISCONNECTED;
+    sprintf(cur_track_info.album_name, "%s", "");
+    sprintf(cur_track_info.artist_name, "%s", "");
+    sprintf(cur_track_info.track_title, "%s", "");
+    sprintf(cur_track_info.app_name, "No BT cxn");
+
+    // xQueueSend(media_info_queue, &cur_track_info, 0);
+
+    // ? NVS init done in main `````````````````````````````````````````````````````
     /* Initialize NVS — it is used to store PHY calibration data */
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
+    // esp_err_t ret = nvs_flash_init();
+    // if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    //     ESP_ERROR_CHECK(nvs_flash_erase());
+    //     ret = nvs_flash_init();
+    // }
+    // ESP_ERROR_CHECK(ret);
+    // ? ``````````````````````````````````````````````````````````````````````````
 
     ret = nimble_port_init();
     if (ret != ESP_OK) {
@@ -260,159 +270,26 @@ int bluetooth_services_setup(QueueHandle_t command_queue, QueueHandle_t info_que
     ble_hs_cfg.sync_cb = ble_main_on_sync;
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
 
-    ble_hs_cfg.sm_bonding = 1;
-    /* Enable the appropriate bit masks to make sure the keys
-     * that are needed are exchanged
-     */
-    ble_hs_cfg.sm_our_key_dist |= BLE_SM_PAIR_KEY_DIST_ENC;
+    ble_hs_cfg.sm_our_key_dist   |= BLE_SM_PAIR_KEY_DIST_ENC;
     ble_hs_cfg.sm_their_key_dist |= BLE_SM_PAIR_KEY_DIST_ENC;
-    ble_hs_cfg.sm_sc = 0;
+    ble_hs_cfg.sm_bonding = 1;
+    ble_hs_cfg.sm_sc = 1;
+    ble_hs_cfg.sm_sc_only = 1;
+    ble_hs_cfg.sm_mitm = 1;
+    ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_DISP_ONLY;
 
     /* Set the default device name. */
-    rc = ble_svc_gap_device_name_set("Mini Cooper");
+    rc = ble_svc_gap_device_name_set(ANNOUNCE_STR);
     assert(rc == 0);
 
     /* XXX Need to have template for store */
     ble_store_config_init();
     nimble_port_freertos_init(ble_main_host_task);
-
-    // Setup bt command handler
-    media_cmd_queue = command_queue;
-    media_info_queue = info_queue;
-    setup_cmd_task();
-
     return 0;
 }
 
-#if SHOULD_AUTOCONNECT
-static void setup_notify_task() {
-    int tsk_ret = xTaskCreatePinnedToCore(avrcp_notify_task, "bt_auto_con", 4096, NULL, AUTOCON_TASK_PRIORITY, &avrcp_notification_task, 0);
-    if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "bt_auto_con creation failed with: %d", tsk_ret);}
-}
-
-static void avrcp_notify_task() {
-    static const char* TASK_TAG = "bt_auto_con";
-    uint32_t avrcp_status = 0;
-    uint16_t retry_delay = 1;
-    uint16_t cxn_attempt_count = 0;
-
-    ESP_LOGD(TASK_TAG, "Autoconnect task started. Blocking while BT boots...");
-    vTaskDelay(SECONDS(10)); // Block for 10 seconds while bt boots...
-
-    while(1) {
-        ESP_LOGD(TASK_TAG, "Waiting for AVRCP Notification...");
-        xTaskNotifyWait(0x00000000, 0x0000FF0C, &avrcp_status, portMAX_DELAY); // Clear 0x04 (New Track), 0x08 (Updated Metadata) Flags, 0xFF00 (play status)
-        ESP_LOGD(TASK_TAG, "Notification Receieved 0x%08x", avrcp_status);
-
-        // avrcp_did_init bit set
-        if(avrcp_status & 0x01) {
-
-            // if avrcp connected flag is set
-            if( (avrcp_status & 0x02) ) {
-                if(cxn_attempt_count > 0){
-                    ESP_LOGI(TASK_TAG, "Successfully connected to %s", AUTOCONNECT_ADDR);
-                    // Clear out track info
-                    strcpy(cur_track_info.track_title, "");
-                    strcpy(cur_track_info.album_name,  "");
-                    strcpy(cur_track_info.artist_name, "");
-                    // Set state details
-                    cur_track_info.state = DEV_CONNECTED;
-                    sprintf(cur_track_info.state_detail, "%cConnected%c",RT_STRIPE_TRI, LT_STRIPE_TRI);
-                    // Put "track data" on queue
-                    xQueueSend(media_info_queue, &cur_track_info, 0);
-                    // Reset counter and delay
-                    cxn_attempt_count = 0;
-                    retry_delay = 1;
-                }
-            } else if((cxn_attempt_count < MAX_CONN_RETRIES)) { // Otherwise, connected flag is unset; let's check cxn_attempts and retry.
-
-                ESP_LOGI(TASK_TAG, "Attempting bt autoconnect: %02d/%02d", cxn_attempt_count + 1, MAX_CONN_RETRIES);
-                
-                vTaskDelay(SECONDS(retry_delay));
-                avrcp_ctl_connect();
-                cxn_attempt_count++;
-
-                // Every 2 connection attempts increase by f(x) = 2x; this should yeild increasing delay for first 30sec with 10sec delays thereafter.
-                if(((cxn_attempt_count % 2) == 0) && (retry_delay < 11)) retry_delay *= 2;
-
-                // Clear out track info
-                strcpy(cur_track_info.track_title, "");
-                strcpy(cur_track_info.album_name,  "");
-                strcpy(cur_track_info.artist_name, "");
-                // Set state details
-                cur_track_info.state = DEV_CONNECTING;
-                sprintf(cur_track_info.state_detail, "Connecting%c", SIGNAL_1 - (cxn_attempt_count%4));
-                // Put "track data" on queue
-                xQueueSend(media_info_queue, &cur_track_info, 0);
-            } else {
-                // Clear out track info
-                strcpy(cur_track_info.track_title, "");
-                strcpy(cur_track_info.album_name,  "");
-                strcpy(cur_track_info.artist_name, "");
-
-                cur_track_info.state = DEV_DISCONNECTED;
-                strcpy(cur_track_info.state_detail, "Disconnected");
-                
-                xQueueSend(media_info_queue, &cur_track_info, 0);
-            }
-
-            if(avrcp_status & 0xFF00) {
-                media_state_t cur_playback_state = ((avrcp_status & 0x0000FF00) >> 8);
-                cur_track_info.state = cur_playback_state;
-                ESP_LOGW(TASK_TAG, "Current Playback State 0x%02x", cur_playback_state);
-                switch (cur_playback_state) {
-                    case MEDIA_STOPPED:
-                        sprintf(cur_track_info.state_detail, "Stop  %c", SIGNAL_3);
-                        break;
-                    case MEDIA_PLAYING:
-                        sprintf(cur_track_info.state_detail, "Play  %c", RT_SOLID_TRI);
-                        break;
-                    case MEDIA_PAUSED:
-                        sprintf(cur_track_info.state_detail, "Pause %c", PAUSE_CHAR);
-                        break;
-                    case MEDIA_SEEK_FWD:
-                        sprintf(cur_track_info.state_detail, "Seek %c%c", RT_SOLID_TRI, RT_SOLID_TRI);
-                        break;
-                    case MEDIA_SEEK_RWD:
-                        sprintf(cur_track_info.state_detail, "Seek %c%c", LT_SOLID_TRI, LT_SOLID_TRI);
-                        break;
-                    default:
-                        break;
-                }
-                xQueueSend(media_info_queue, &cur_track_info, 10);
-            }
-
-            if(avrcp_status & 0x08) {   // Track info updated, pull it
-                strcpy(cur_track_info.track_title, avrcp_get_track_str());
-                strcpy(cur_track_info.album_name,  avrcp_get_album_str());
-                strcpy(cur_track_info.artist_name, avrcp_get_artist_str());
-
-                uint16_t cur_track_total_tracks = avrcp_get_track_info();
-
-                cur_track_info.total_tracks = (uint8_t) cur_track_total_tracks & 0x0F;
-                cur_track_info.cur_track = (uint8_t) (cur_track_total_tracks >> 8) & 0x0F;
-
-                cur_track_info.track_len_ms = avrcp_get_track_len_ms();
-
-                ESP_LOGI(TASK_TAG, "Track Info: %s - %s - %s\t%d/%d",
-                                cur_track_info.track_title,
-                                cur_track_info.album_name,
-                                cur_track_info.artist_name,
-                                cur_track_info.cur_track, cur_track_info.total_tracks);
-                xQueueSend(media_info_queue, &cur_track_info, 10);
-            }
-
-            if(avrcp_status & 0x04) {   // Track changed, request "now playing"
-                ESP_LOGI(TASK_TAG, "Track Changed...");
-                avrcp_req_now_playing();
-            }
-        }
-    }
-}
-#endif
-
 static void setup_cmd_task() {
-    int tsk_ret = xTaskCreatePinnedToCore(bt_cmd_task, "bt_cmd", 2048, NULL, BT_TASK_PRIORITY, NULL, 0);
+    int tsk_ret = xTaskCreatePinnedToCore(bt_cmd_task, "bt_cmd", 2048, NULL, BT_TASK_PRIORITY, NULL, 1);
     if(tsk_ret != pdPASS){ ESP_LOGE(TAG, "bt_cmd creation failed with: %d", tsk_ret);}
 }
 
@@ -424,78 +301,61 @@ static void bt_cmd_task() {
 
         if(xQueueReceive(media_cmd_queue, (void*) &command,  portMAX_DELAY) && ams_setup_complete) {    
             switch(command) {
-                // case BT_CONNECT:
-                //     ESP_LOGD(TAG, "BT Attempting Connect");
-                //     if(avrcp_ctl_connect() != ERROR_CODE_SUCCESS) {
-                //         ESP_LOGE(TAG, "AVRCP Connection error");
-                //     }
-                //     break;
-                // case BT_DISCONNECT:
-                //     ESP_LOGD(TAG, "BT Attempting Disconnect");
-                //     if(avrcp_ctl_disconnect() != ERROR_CODE_SUCCESS) {
-                //         ESP_LOGE(TAG, "AVRCP Disconnect error");
-                //     }
-                //     break;
                 case MEDIA_PLAY:
                     ESP_LOGD(TAG, "BT Play Requested");
                     if(ams_send_remote_command(shared_conn_handle, RemoteCommandIDPlay)) {
-                        ESP_LOGE(TAG, "Play command error");
+                        ESP_LOGE(TAG, "Play command error: handle 0x%04x", shared_conn_handle);
                     }
                     break;
                 case MEDIA_PAUSE:
                     ESP_LOGD(TAG, "BT Pause Requested");
                     if(ams_send_remote_command(shared_conn_handle, RemoteCommandIDPause)) {
-                        ESP_LOGE(TAG, "Pause command error");
+                        ESP_LOGE(TAG, "Pause command error: handle 0x%04x", shared_conn_handle);
                     }
                     break;
                 case MEDIA_STOP:
                     ESP_LOGD(TAG, "BT STOP Requested");
                     if(ams_send_remote_command(shared_conn_handle, RemoteCommandIDPause)) {
-                        ESP_LOGE(TAG, "Pause command error");
+                        ESP_LOGE(TAG, "Pause command error: handle 0x%04x", shared_conn_handle);
                     }
                     break;
                 case MEDIA_NEXT:
                     ESP_LOGD(TAG, "BT Next Requested");
                     if(ams_send_remote_command(shared_conn_handle, RemoteCommandIDNextTrack)) {
-                        ESP_LOGE(TAG, "Next command error");
+                        ESP_LOGE(TAG, "Next command error: handle 0x%04x", shared_conn_handle);
                     }
                     break;
                 case MEDIA_PREV:
                     ESP_LOGD(TAG, "BT Previous Requested");
                     if(ams_send_remote_command(shared_conn_handle, RemoteCommandIDPreviousTrack)) {
-                        ESP_LOGE(TAG, "Previous command error");
+                        ESP_LOGE(TAG, "Previous command error: handle 0x%04x", shared_conn_handle);
                     }
                     break;
-                // case MEDIA_FF_START:
-                //     ESP_LOGD(TAG, "BT Fast Forward Requested");
-                //     if(avrcp_ctl_start_ff() != ERROR_CODE_SUCCESS) {
-                //         ESP_LOGE(TAG, "AVRCP FF command error");
-                //     }
-                //     break;
-                // case MEDIA_FF_STOP:
-                //     ESP_LOGD(TAG, "BT Fast Forward Stop");
-                //     if(avrcp_ctl_end_long_press() != ERROR_CODE_SUCCESS) {
-                //         ESP_LOGE(TAG, "AVRCP FF Stop command error");
-                //     }
-                //     break;
-                // case MEDIA_RWD_START:
-                //     ESP_LOGD(TAG, "BT Rewind Requested");
-                //     if(avrcp_ctl_start_rwd() != ERROR_CODE_SUCCESS) {
-                //         ESP_LOGE(TAG, "AVRCP RWD command error");
-                //     }
-                //     break;
-                // case MEDIA_RWD_STOP:
-                //     ESP_LOGD(TAG, "BT Rewind Stop");
-                //     if(avrcp_ctl_end_long_press() != ERROR_CODE_SUCCESS) {
-                //         ESP_LOGE(TAG, "AVRCP RWD command error");
-                //     }
-                //     break;
-                // case MEDIA_REQ_INFO:
-                // ESP_LOGD(TAG, "AVRCP Requesting Track Info");
-                //     if(avrcp_req_now_playing() != ERROR_CODE_SUCCESS) {
-                //         ESP_LOGE(TAG, "AVRCP RWD command error");
-                //     }
-                //     break;
+                case MEDIA_FF_START:
+                    ESP_LOGD(TAG, "BT Fast Forward Requested");
+                    if(ams_send_remote_command(shared_conn_handle, RemoteCommandIDSkipForward)) {
+                        ESP_LOGE(TAG, "FF command error: handle 0x%04x", shared_conn_handle);
+                    }
+                    break;
+                case MEDIA_FF_STOP:
+                    ESP_LOGD(TAG, "BT Fast Forward Stop");
+                    if(ams_send_remote_command(shared_conn_handle, RemoteCommandIDPlay)) {
+                        ESP_LOGE(TAG, "FF Stop command error: handle 0x%04x", shared_conn_handle);
+                    }
+                    break;
+                case MEDIA_RWD_START:
+                    ESP_LOGD(TAG, "BT Rewind Requested");
+                    if(ams_send_remote_command(shared_conn_handle, RemoteCommandIDSkipBackward)) {
+                        ESP_LOGE(TAG, "RWD command error: handle 0x%04x", shared_conn_handle);
+                    }
+                    break;
+                case MEDIA_RWD_STOP:
+                    ESP_LOGD(TAG, "BT Rewind Stop");
+                    if(ams_send_remote_command(shared_conn_handle, RemoteCommandIDPlay)) {
+                        ESP_LOGE(TAG, "RWD command error: handle 0x%04x", shared_conn_handle);
+                    }
+                    break;
+
                 default:
                     ESP_LOGD(TAG, "No action registered for command 0x%02x", command);
             }
@@ -537,13 +397,13 @@ static int ble_ancs_gap_event(struct ble_gap_event *event, void *arg) {
         if (event->connect.status == 0) {
             rc = ble_gap_conn_find(event->connect.conn_handle, &desc);
             assert(rc == 0);
-            ble_main_print_conn_desc(&desc);
+            ble_svc_print_conn_desc(&desc);
         }
         MODLOG_DFLT(INFO, "\n");
 
         if (event->connect.status != 0) {
             /* Connection failed; resume advertising. */
-            ble_main_advertise();
+            ble_svc_advertise();
         }
 
         /** Initiate security - It will perform
@@ -564,10 +424,11 @@ static int ble_ancs_gap_event(struct ble_gap_event *event, void *arg) {
 
     case BLE_GAP_EVENT_DISCONNECT:
         MODLOG_DFLT(INFO, "disconnect; reason=%d ", event->disconnect.reason);
-        ble_main_print_conn_desc(&event->disconnect.conn);
+        ble_svc_print_conn_desc(&event->disconnect.conn);
         MODLOG_DFLT(INFO, "\n");
         /* Connection terminated; resume advertising. */
-        ble_main_advertise();
+        ble_svc_advertise();
+        xQueueSend(media_info_queue, &cur_track_info, 0);
         return 0;
 
     case BLE_GAP_EVENT_CONN_UPDATE:
@@ -576,14 +437,14 @@ static int ble_ancs_gap_event(struct ble_gap_event *event, void *arg) {
                     event->conn_update.status);
         rc = ble_gap_conn_find(event->conn_update.conn_handle, &desc);
         assert(rc == 0);
-        ble_main_print_conn_desc(&desc);
+        ble_svc_print_conn_desc(&desc);
         MODLOG_DFLT(INFO, "\n");
         return 0;
 
     case BLE_GAP_EVENT_ADV_COMPLETE:
         MODLOG_DFLT(INFO, "advertise complete; reason=%d",
                     event->adv_complete.reason);
-        ble_main_advertise();
+        ble_svc_advertise();
         return 0;
 
     case BLE_GAP_EVENT_ENC_CHANGE:
@@ -593,11 +454,16 @@ static int ble_ancs_gap_event(struct ble_gap_event *event, void *arg) {
         rc = ble_gap_conn_find(event->enc_change.conn_handle, &desc);
         assert(rc == 0);
 
-        ble_main_print_conn_desc(&desc);
+        ble_svc_print_conn_desc(&desc);
         MODLOG_DFLT(INFO, "\n");
         
         shared_conn_handle = event->connect.conn_handle;
-        find_ancs_ams(shared_conn_handle);
+        find_ancs_ams(event->connect.conn_handle);
+
+        // Update Display
+        *cur_track_info.state = DEV_CONNECTED;
+        sprintf(cur_track_info.app_name, "Connected");
+        xQueueSend(media_info_queue, &cur_track_info, 0);
 
         return 0;
 
@@ -639,19 +505,22 @@ static int ble_ancs_gap_event(struct ble_gap_event *event, void *arg) {
             event->notify_rx.om->om_len);
             ancs_buffer.len += event->notify_rx.om->om_len;
 
-            if (event->notify_rx.om->om_len == (MTU_size - 3)) {
-                esp_timer_start_periodic(periodic_timer, 500000);
-            } else {
-                esp_timer_stop(periodic_timer);
+            // if (event->notify_rx.om->om_len == (MTU_size - 3)) {
+            //     esp_timer_start_periodic(periodic_timer, 500000);
+            // } else {
+            //     esp_timer_stop(periodic_timer);
                 ancs_receive_apple_data_source(ancs_buffer.buffer, ancs_buffer.len);
                 memset(ancs_buffer.buffer, 0, ancs_buffer.len);
                 ancs_buffer.len = 0;
-            }    
+            // }
         } else if (event->notify_rx.attr_handle == ams_entity_attr_handle) {
-            MODLOG_DFLT(INFO, "Received entity_attr notify_rx event");
+            MODLOG_DFLT(ERROR, "Received entity_attr notify_rx event");
             ams_decode_entity_attr(event->notify_rx.om->om_data, event->notify_rx.om->om_len);
+            xQueueSend(media_info_queue, &cur_track_info, 0);
         } else if (event->notify_rx.attr_handle == ams_entity_update_handle) {
+            MODLOG_DFLT(WARN, "Received entity_update notify_rx event");
             ams_decode_entity_update(event->notify_rx.om->om_data, event->notify_rx.om->om_len);
+            xQueueSend(media_info_queue, &cur_track_info, 0);
         } else if (event->notify_rx.attr_handle == ams_remote_command_handle) {
             MODLOG_DFLT(INFO, "Received remote_command notify_rx event");
         } else {
@@ -700,24 +569,37 @@ static int ble_ancs_gap_event(struct ble_gap_event *event, void *arg) {
         struct ble_sm_io pkey = {0};
         int key = 0;
 
+        // Update info buffer so passkey is displayed
+        *cur_track_info.state = DEV_CONNECTING;
+
         if (event->passkey.params.action == BLE_SM_IOACT_DISP) {
             pkey.action = event->passkey.params.action;
-            pkey.passkey = 123456; // This is the passkey to be entered on peer
-            ESP_LOGI(TAG, "Enter passkey %" PRIu32 "on the peer side", pkey.passkey);
+            pkey.passkey = passkey;
+
+            sprintf(cur_track_info.app_name, "%lu", passkey);
+            xQueueSend(media_info_queue, &cur_track_info, 0);
+
+            ESP_LOGI(TAG, "Enter passkey %" PRIu32 " on the peer side", pkey.passkey);
             rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
             ESP_LOGI(TAG, "ble_sm_inject_io result: %d", rc);
+
         } else if (event->passkey.params.action == BLE_SM_IOACT_NUMCMP) {
             ESP_LOGI(TAG, "Passkey on device's display: %" PRIu32 , event->passkey.params.numcmp);
             ESP_LOGI(TAG, "Accept or reject the passkey through console in this format -> key Y or key N");
             pkey.action = event->passkey.params.action;
-            if (scli_receive_key(&key)) {
-                pkey.numcmp_accept = key;
-            } else {
-                pkey.numcmp_accept = 0;
-                ESP_LOGE(TAG, "Timeout! Rejecting the key");
-            }
+
+            sprintf(cur_track_info.app_name, "%lu", event->passkey.params.numcmp);
+            xQueueSend(media_info_queue, &cur_track_info, 0);
+            // if (scli_receive_key(&key)) {
+            //     pkey.numcmp_accept = key;
+            // } else {
+            //     pkey.numcmp_accept = 0;
+            //     ESP_LOGE(TAG, "Timeout! Rejecting the key");
+            // }
+            pkey.numcmp_accept = passkey; // TODO: logic for y/n input
             rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
             ESP_LOGI(TAG, "ble_sm_inject_io result: %d", rc);
+
         } else if (event->passkey.params.action == BLE_SM_IOACT_OOB) {
             static uint8_t tem_oob[16] = {0};
             pkey.action = event->passkey.params.action;
@@ -726,6 +608,7 @@ static int ble_ancs_gap_event(struct ble_gap_event *event, void *arg) {
             }
             rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
             ESP_LOGI(TAG, "ble_sm_inject_io result: %d", rc);
+
         } else if (event->passkey.params.action == BLE_SM_IOACT_INPUT) {
             ESP_LOGI(TAG, "Enter the passkey through console in this format-> key 123456");
             pkey.action = event->passkey.params.action;

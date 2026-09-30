@@ -1,14 +1,30 @@
+// std includes
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+
+// ESP includes
 #include "esp_log.h"
+
+// Header
 #include "ble_ams.h"
 
 #define NimBLE_AMS_TAG  "NimBLE_AMS"
 
+// BLE handles
 uint16_t ams_remote_command_handle;
 uint16_t ams_entity_update_handle;
 uint16_t ams_entity_attr_handle;
+
+// Now Playing Info
+static char track_str[96]  ={'\0'};
+static char artist_str[96] ={'\0'};
+static char album_str[96]  ={'\0'};
+static char app_str[96]    ={'\0'};
+static uint32_t track_len_ms   = 0;
+static uint8_t  track_no       = 0;
+static uint8_t  total_tracks   = 0;
+static uint8_t  playback_state = 0;
 
 char *EntityID_to_String(uint8_t EntityID)
 {
@@ -151,7 +167,7 @@ static int ams_mark_as_complete(uint16_t conn_handle,
     return rc;
 }
 
-static int ams_request_player_info(uint16_t conn_handle,
+static int ams_request_player_updates(uint16_t conn_handle,
                         const struct ble_gatt_error *error,
                         struct ble_gatt_attr *attr,
                         void *arg)
@@ -173,7 +189,7 @@ static int ams_request_player_info(uint16_t conn_handle,
 }
 
 // TODO: generalize to take argument array for data to avoid multiple callbacks
-static int ams_request_track_info(uint16_t conn_handle,
+static int ams_request_track_updates(uint16_t conn_handle,
                         const struct ble_gatt_error *error,
                         struct ble_gatt_attr *attr,
                         void *arg)
@@ -189,7 +205,7 @@ static int ams_request_track_info(uint16_t conn_handle,
     rc = ble_gattc_write_flat(conn_handle,
                         ams_entity_update_handle,
                         data, sizeof(data),
-                        ams_request_player_info, NULL);
+                        ams_request_player_updates, NULL);
 
     return rc;
 }
@@ -207,7 +223,7 @@ static int ams_dsc_discovered_cb(uint16_t conn_handle, const struct ble_gatt_err
             rc = ble_gattc_write_flat(conn_handle,
                                     dsc->handle,
                                     cccd_val, sizeof(cccd_val),
-                                    ams_request_track_info, NULL);
+                                    ams_request_track_updates, NULL);
             if (rc != 0) {
                 MODLOG_DFLT(WARN, "Failed to subscribe to (rc=%d)", rc);
                 return rc;
@@ -300,21 +316,28 @@ void ams_decode_entity_update(uint8_t *message, uint16_t message_len)
 
     switch (entityID) {
         case EntityIDPlayer:
-            if(attrID == PlayerAttributeIDPlaybackInfo) {
-                ESP_LOGI(NimBLE_AMS_TAG, "%d bytes\t%s - %s\t%s\t%s - 0x%01x",
-                message_len,
-                EntityID_to_String(entityID),
-                PlayerAttrID_to_String(attrID),
-                PlaybackState_to_String(atoi(&value[0])),
-                value, entityUpdateFlags
-            );
-            } else {
-                ESP_LOGI(NimBLE_AMS_TAG, "%d bytes\t%s - %s\t%s - 0x%01x",
-                message_len,
-                EntityID_to_String(entityID),
-                PlayerAttrID_to_String(attrID),
-                value, entityUpdateFlags
-            );
+            switch (attrID) {
+                case PlayerAttributeIDPlaybackInfo:
+                    playback_state = (uint8_t) atoi(&value[0]);
+                    ESP_LOGI(NimBLE_AMS_TAG, "%d bytes\t%s - %s\t%s\t%s - 0x%01x",
+                        message_len,
+                        EntityID_to_String(entityID),
+                        PlayerAttrID_to_String(attrID),
+                        PlaybackState_to_String(playback_state),
+                        value, entityUpdateFlags
+                    );
+                    break;
+                case PlayerAttributeIDName:
+                    // Updated Player Name
+                    strcpy(app_str, value);
+                default:
+                    ESP_LOGI(NimBLE_AMS_TAG, "%d bytes\t%s - %s\t%s - 0x%01x",
+                        message_len,
+                        EntityID_to_String(entityID),
+                        PlayerAttrID_to_String(attrID),
+                        value, entityUpdateFlags
+                    );
+                    break;
             }
             break;
 
@@ -328,6 +351,21 @@ void ams_decode_entity_update(uint8_t *message, uint16_t message_len)
             break;
 
         case EntityIDTrack:
+            switch (attrID) {
+                case TrackAttributeIDArtist:
+                     strcpy(artist_str, value);
+                    break;
+                case TrackAttributeIDAlbum:
+                     strcpy(album_str, value);
+                    break;
+                case TrackAttributeIDTitle:
+                     strcpy(track_str, value);
+                    break;
+                case TrackAttributeIDDuration:
+                    break;
+                default:
+                    break;
+            }
             ESP_LOGI(NimBLE_AMS_TAG, "%d bytes\t%s - %s\t%s - 0x%01x",
                 message_len,
                 EntityID_to_String(entityID),
@@ -343,19 +381,14 @@ void ams_decode_entity_update(uint8_t *message, uint16_t message_len)
 }
 
 int ams_send_remote_command(uint16_t conn_handle, ble_ams_RemoteCommandID command) {
-
-    int rc = ble_gattc_write_flat(conn_handle,
-                                  ams_remote_command_handle,
-                                  &command,
-                                  1,
-                                  NULL, // no callback
-                                  NULL); // no callback argument
-
-    if (rc != 0) {
-        MODLOG_DFLT(WARN, "Failed to write AMS command: rc=%d\n", rc);
-    }
-
-    return rc;
+    uint8_t buffer[1] = {0};
+    buffer[0] = command;
+    return ble_gattc_write_flat(conn_handle,
+                                ams_remote_command_handle,
+                                buffer,
+                                1,
+                                NULL, // no callback
+                                NULL); // no callback argument
 }
 
 void ams_decode_entity_attr(uint8_t *message, uint16_t message_len)
@@ -395,4 +428,24 @@ void ams_decode_entity_attr(uint8_t *message, uint16_t message_len)
         default:
             break;
     }
+}
+
+char* ams_get_track_str(){
+    return track_str;
+}
+
+char* ams_get_album_str(){
+    return album_str;
+}
+
+char* ams_get_artist_str(){
+    return artist_str;
+}
+
+char* ams_get_app_str(){
+    return app_str;
+}
+
+uint8_t* ams_get_playback_state(){
+    return &playback_state;
 }

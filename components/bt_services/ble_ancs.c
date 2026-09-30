@@ -226,6 +226,7 @@ static int ancs_on_subscribe(uint16_t conn_handle,
                 "status=%d conn_handle=%d",
                 error->status, conn_handle);
 
+    ancs_setup_complete = true;
     return 0;
 }
 

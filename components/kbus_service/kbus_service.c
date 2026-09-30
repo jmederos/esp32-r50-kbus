@@ -104,32 +104,71 @@ static void bt_info_task() {
     media_now_playing_t info;
     while(1) {
         if(xQueueReceive(media_info_queue, (void*) &info, portMAX_DELAY)) {
-            strcpy(sdrs_display_buf->artist, info.artist_name);
 
-            ESP_LOGE(TAG, "%s-%s-%s", info.artist_name, info.track_title, info.state_detail);
-
-            // If not playing, display info message
-            if(info.state != MEDIA_PLAYING) {
-                strcpy(sdrs_display_buf->channel, info.state_detail);
-                if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x02, eSetValueWithOverwrite);
-            }
-            // If incoming song string is new and not empty, display song/artist
-            else if(strcmp(sdrs_display_buf->song, info.track_title) && strcmp(info.track_title, "")){
-                strcpy(sdrs_display_buf->channel, info.state_detail);
-                strcpy(sdrs_display_buf->song, info.track_title);
-                if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x01, eSetValueWithOverwrite);
-            }
-            // If incoming song string matches last one, isn't empty, and info message has changed
-            else if(strcmp(sdrs_display_buf->channel, info.state_detail) || (!strcmp(sdrs_display_buf->song, info.track_title) && strcmp(info.track_title, ""))) {
-                strcpy(sdrs_display_buf->channel, info.state_detail);
-                if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x01, eSetValueWithOverwrite);
-            }
-            else { // Generic 'playing' info message
-                strcpy(sdrs_display_buf->channel, info.state_detail);
-                if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x02, eSetValueWithOverwrite);
+            switch (*info.state) {
+                case MEDIA_STOPPED:
+                    ESP_LOGW(TAG, "%s-%s-stopped", info.artist_name, info.track_title);
+                    sprintf(sdrs_display_buf->channel, "Stop  %c", SIGNAL_3);
+                    if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x02, eSetValueWithOverwrite);
+                    break;
+                case MEDIA_PLAYING:
+                    sprintf(info.state_detail, "%s %c", info.app_name, RT_SOLID_TRI);
+                    strcpy(sdrs_display_buf->artist, info.artist_name);
+                    // If incoming song string is new and not empty, display song/artist
+                    if(strcmp(sdrs_display_buf->song, info.track_title) && strcmp(info.track_title, "")){
+                        strcpy(sdrs_display_buf->channel, info.state_detail);
+                        strcpy(sdrs_display_buf->song, info.track_title);
+                        if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x01, eSetValueWithOverwrite);
+                    }
+                    // If incoming song string matches last one, isn't empty, and info message has changed
+                    else if(strcmp(sdrs_display_buf->channel, info.state_detail) || (!strcmp(sdrs_display_buf->song, info.track_title) && strcmp(info.track_title, ""))) {
+                        strcpy(sdrs_display_buf->channel, info.state_detail);
+                        if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x01, eSetValueWithOverwrite);
+                    }
+                    ESP_LOGW(TAG, "%s-%s-playing", info.artist_name, info.track_title);
+                    break;
+                case MEDIA_PAUSED:
+                    sprintf(sdrs_display_buf->channel, "%s %c", info.app_name, PAUSE_CHAR);
+                    strcpy(sdrs_display_buf->artist, info.artist_name);
+                    if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x02, eSetValueWithOverwrite);
+                    ESP_LOGW(TAG, "%s-%s-paused", info.artist_name, info.track_title);
+                    break;
+                case MEDIA_SEEK_FWD:
+                    sprintf(sdrs_display_buf->channel, "Seek %c%c", RT_SOLID_TRI, RT_SOLID_TRI);
+                    strcpy(sdrs_display_buf->artist, info.artist_name);
+                    if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x02, eSetValueWithOverwrite);
+                    ESP_LOGW(TAG, "%s-%s-ff", info.artist_name, info.track_title);
+                    break;
+                case MEDIA_SEEK_RWD:
+                    sprintf(sdrs_display_buf->channel, "Seek %c%c", LT_SOLID_TRI, LT_SOLID_TRI);
+                    strcpy(sdrs_display_buf->artist, info.artist_name);
+                    if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x02, eSetValueWithOverwrite);
+                    ESP_LOGW(TAG, "%s-%s-rwd", info.artist_name, info.track_title);
+                    break;
+                case DEV_DISCONNECTED:
+                    sprintf(sdrs_display_buf->channel, "No BT cxn");
+                    if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x02, eSetValueWithOverwrite);
+                    ESP_LOGW(TAG, "disconnected");
+                    break;
+                case DEV_CONNECTING:
+                    sprintf(sdrs_display_buf->channel, "%c%s%c", RT_STRIPE_TRI, info.app_name, LT_STRIPE_TRI);
+                    if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x02, eSetValueWithOverwrite);
+                    ESP_LOGW(TAG, "connecting");
+                    break;
+                case DEV_CONNECTED:
+                    sprintf(sdrs_display_buf->channel, "%s", info.app_name);
+                    if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x02, eSetValueWithOverwrite);
+                    ESP_LOGW(TAG, "connected");
+                    break;
+                default:
+                    // Generic bluetooth 
+                    sprintf(sdrs_display_buf->channel, "%c BT %c", RT_STRIPE_TRI, LT_STRIPE_TRI);
+                    if(tel_display_tsk != NULL) xTaskNotify(tel_display_tsk, 0x02, eSetValueWithOverwrite);
+                    ESP_LOGW(TAG, "generic");
+                    break;
             }
         }
-        vTaskDelay(HERTZ(1)); // Rate limit updates to 1Hz
+        vTaskDelay(SECONDS(2)); // Rate limit updates to 0.5Hz
     }
     vTaskDelete(NULL); // In case we leave the loop, to avoid a panic
 }
@@ -151,7 +190,7 @@ void send_dev_ready(uint8_t source, uint8_t dest, bool startup) {
     } else {
         ESP_LOGD(TAG, "Queueing 0x%02x -> 0x%02x DEVICE READY", source, dest);
     }
-    xQueueSend(kbus_tx_queue, &message,portMAX_DELAY);
+    xQueueSend(kbus_tx_queue, &message, 0);
 }
 
 static void kbus_rx_task() {
@@ -394,7 +433,7 @@ static void mfl_handler(uint8_t mfl_cmd[2]) {
                 
                 default:
                     ESP_LOGD(TAG, "Other MFL -> RAD/TEL Button Event: 0x%02x", mfl_cmd[1]);
-                    // free_last_mfl(); // Command we don't care about, free last_mfl_cmd
+                    free_last_mfl(); // Command we don't care about, free last_mfl_cmd
                     break;
             }
             break;
@@ -416,7 +455,7 @@ static void tel_display_task() {
     
     static uint32_t notification;
     static const uint8_t text_limit = 10;
-    static const uint8_t step_size = 5;
+    static const uint8_t step_size = 8;
     
     uint16_t cur_secs = 0;
     uint8_t refresh_secs = 10;
@@ -428,7 +467,7 @@ static void tel_display_task() {
     bool disp_will_update = false;
 
     while(1){
-        xTaskNotifyWait(0x00000000, 0x00000003, &notification, SECONDS(1)); // CLear 0x01 (new track) && 0x02 (stop) on exit and continue
+        xTaskNotifyWait(0x00000000, 0x00000003, &notification, SECONDS(2)); // CLear 0x01 (new track) && 0x02 (stop) on exit and continue
 
         disp_will_refresh = !(cur_secs % refresh_secs);
 

@@ -17,29 +17,29 @@ typedef enum {
     MEDIA_REQ_INFO
 } media_cmd_type_t;
 
-// making compatible with avrcp.c
-// avrcp_play_status_name
+// making compatible with AMS PlaybackState
 typedef enum {
-    MEDIA_STOPPED,
-    MEDIA_PLAYING,
-    MEDIA_PAUSED,
-    MEDIA_SEEK_FWD,
-    MEDIA_SEEK_RWD,
-    DEV_DISCONNECTED,
-    DEV_CONNECTING,
-    DEV_CONNECTED
+    MEDIA_PAUSED,    // AMS PlaybackStatePaused
+    MEDIA_PLAYING,   // AMS PlaybackStatePlaying
+    MEDIA_SEEK_RWD,  // AMS PlaybackStateRewinding
+    MEDIA_SEEK_FWD,  // AMS PlaybackStateFastForwarding
+    MEDIA_STOPPED,   // Media is stopped; was used on AVRCP
+    DEV_DISCONNECTED, // Device is disconnected
+    DEV_CONNECTING,   // Device is connecting
+    DEV_CONNECTED     // Device is connected
 } media_state_t;
 
 typedef struct {
-    char album_name[128];
-    char track_title[128];
-    char artist_name[64];
+    char* album_name;
+    char* track_title;
+    char* artist_name;
+    char* app_name;
     char state_detail[32];
 
     uint32_t track_len_ms;
     uint8_t cur_track;
     uint8_t total_tracks;
-    media_state_t state;
+    media_state_t* state;
 } media_now_playing_t;
 
 #endif

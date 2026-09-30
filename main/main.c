@@ -96,10 +96,6 @@ int app_main(void){
 #ifdef R50_BT_ENABLED
     ESP_LOGI(TAG, "Starting bt services...");
     bluetooth_services_setup(media_cmd_queue, media_info_queue);
-    // Running btstack_run_loop_execute() as it's own task or in a wrapper wasn't working;
-    // however, does work as lowest priority loop after other tasks. Going with this.
-    ESP_LOGI(TAG, "btstack run loop");
-    // btstack_run_loop_execute();
 #else
     while(1) {
         printf("Bluetooth runloop goes here...\n");

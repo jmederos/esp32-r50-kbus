@@ -136,4 +136,11 @@ void ams_decode_entity_update(uint8_t *message, uint16_t message_len);
 int  ams_send_remote_command(uint16_t conn_handle, ble_ams_RemoteCommandID command);
 void ams_decode_entity_attr(uint8_t *message, uint16_t message_len);
 
+// getters
+char* ams_get_track_str();
+char* ams_get_album_str();
+char* ams_get_artist_str();
+char* ams_get_app_str();
+uint8_t* ams_get_playback_state();
+
 #endif
